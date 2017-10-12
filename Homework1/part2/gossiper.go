@@ -11,7 +11,8 @@ import (
 
 func main() {
 
-	uiPort := flag.Int("UIPort", 0, "port for the client interface")
+	uiPort := flag.Int("UIPort", 0, "port for the command-line client interface")
+	httpPort := flag.Int("webPort", 0, "port for the HTTP client interface")
 	gossipIpPort := flag.String("gossipPort", "", "address/port for the gossiper")
 	nodeName := flag.String("name", "", "name of this node")
 	peersParams := flag.String("peers", "", "peers separated by commas")
@@ -35,6 +36,7 @@ func main() {
 
 	Context.PeerSet = make(map[string]bool)
 	Context.Messages = make(map[string][]string)
+	Context.MessageLog = make([]MessageLogEntry, 0)
 	Context.StatusSubscriptions = make(map[string]func(*StatusPacket))
 
 	// Check if all peer addresses are valid, and resolve them if they contain domain names
@@ -85,7 +87,7 @@ func main() {
 			fmt.Printf("RUMOR origin %s from %s ID %d contents %s\n", m.Origin, sender, m.PeerMessage.ID, m.PeerMessage.Text)
 			printPeerList()
 
-			inserted, _ := Context.TryInsertMessage(m.Origin, m.PeerMessage.Text, m.PeerMessage.ID)
+			inserted, _ := Context.TryInsertMessage(m.Origin, sender, m.PeerMessage.Text, m.PeerMessage.ID)
 			Context.SendStatusMessage(sender) // Send status message in order to acknowledge
 			if inserted {
 				// This message has not been seen before
@@ -142,6 +144,11 @@ func main() {
 		}
 		// Start listening for client messages in another thread
 		clientHandler.Start()
+	}
+
+	// If a HTTP UI port is given, define the handler for client requests
+	if *httpPort != 0 {
+		InitializeWebServer(*httpPort)
 	}
 
 	// Start anti-entropy routine

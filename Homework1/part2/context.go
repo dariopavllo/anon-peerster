@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"math/rand"
+	"time"
 )
 
 type contextType struct {
@@ -12,8 +13,17 @@ type contextType struct {
 	Messages        map[string][]string
 	ThisNodeName    string
 	ThisNodeAddress string
+	MessageLog      []MessageLogEntry
 
 	StatusSubscriptions map[string]func(statusMessage *StatusPacket)
+}
+
+type MessageLogEntry struct {
+	FirstSeen   time.Time
+	FromNode    string
+	SeqID       uint32
+	FromAddress string
+	Content     string
 }
 
 var Context contextType
@@ -30,13 +40,15 @@ func (c *contextType) AddNewMessage(message string) uint32 {
 	}
 
 	c.Messages[c.ThisNodeName] = append(c.Messages[c.ThisNodeName], message)
+	c.MessageLog = append(c.MessageLog,
+		MessageLogEntry{time.Now(), c.ThisNodeName, uint32(nextID), c.ThisNodeAddress, message})
 	return uint32(nextID)
 }
 
 // TryInsertMessage inserts a new message in order.
 // Returns true if the message is inserted, and false if it was already seen.
 // An error is returned if the supplied ID is not the expected next ID (i.e. if the message is out of order)
-func (c *contextType) TryInsertMessage(origin string, message string, id uint32) (bool, error) {
+func (c *contextType) TryInsertMessage(origin string, originAddress string, message string, id uint32) (bool, error) {
 	if id == 0 {
 		return false, errors.New("message IDs must start from 1")
 	}
@@ -47,6 +59,8 @@ func (c *contextType) TryInsertMessage(origin string, message string, id uint32)
 		if id == expectedNextID {
 			// New message (in order)
 			c.Messages[origin] = append(c.Messages[origin], message)
+			c.MessageLog = append(c.MessageLog,
+				MessageLogEntry{time.Now(), origin, id, originAddress, message})
 			return true, nil
 		} else if id < expectedNextID {
 			// Already seen
@@ -60,6 +74,8 @@ func (c *contextType) TryInsertMessage(origin string, message string, id uint32)
 		if id == 1 {
 			c.Messages[origin] = make([]string, 1)
 			c.Messages[origin][0] = message
+			c.MessageLog = append(c.MessageLog,
+				MessageLogEntry{time.Now(), origin, 1, originAddress, message})
 			return true, nil
 		}
 
@@ -165,4 +181,9 @@ func (c *contextType) SendStatusMessage(peerAddress string) {
 	statusMsg := c.BuildStatusMessage()
 	gossipMsg := GossipPacket{Status: statusMsg}
 	Context.GossipSocket.Send(Encode(&gossipMsg), peerAddress)
+}
+
+type PeerDescription struct {
+	Address string
+	Name string
 }
