@@ -92,7 +92,7 @@ func main() {
 				randomPeer := Context.RandomPeer([]string{sender})
 				if randomPeer != "" {
 					fmt.Printf("MONGERING with %s\n", randomPeer)
-					startRumormongering(m, []string{sender}, randomPeer)
+					startRumormongering(m, randomPeer)
 				}
 			}
 		}
@@ -134,10 +134,10 @@ func main() {
 
 			id := Context.AddNewMessage(msg.Text)
 			rumorMsg := Context.BuildRumorMessage(Context.ThisNodeName, id)
-			randomPeer := Context.RandomPeer([]string{sender})
+			randomPeer := Context.RandomPeer([]string{})
 			if randomPeer != "" {
 				fmt.Printf("MONGERING with %s\n", randomPeer)
-				startRumormongering(rumorMsg, []string{}, randomPeer)
+				startRumormongering(rumorMsg, randomPeer)
 			}
 		}
 		// Start listening for client messages in another thread
@@ -162,7 +162,7 @@ func main() {
 	}
 }
 
-func startRumormongering(msg *RumorMessage, exclusionList []string, destinationPeerAddress string) {
+func startRumormongering(msg *RumorMessage, destinationPeerAddress string) {
 	if destinationPeerAddress == "" {
 		return
 	}
@@ -173,10 +173,12 @@ func startRumormongering(msg *RumorMessage, exclusionList []string, destinationP
 	statusChannel := make(chan *StatusPacket)
 	Context.StatusSubscriptions[destinationPeerAddress] = func(statusMessage *StatusPacket) {
 		select {
-			case statusChannel <- statusMessage: {
+		case statusChannel <- statusMessage:
+			{
 				// Message received
 			}
-			default: {
+		default:
+			{
 				// Do not block
 			}
 		}
@@ -208,11 +210,10 @@ func startRumormongering(msg *RumorMessage, exclusionList []string, destinationP
 
 				// Flip a coin
 				if rand.Intn(2) == 1 {
-					exclusionList = append(exclusionList, destinationPeerAddress) // Avoid selecting this peer again
-					randomPeer := Context.RandomPeer(exclusionList)
+					randomPeer := Context.RandomPeer([]string{destinationPeerAddress}) // Avoid selecting this peer again
 					if randomPeer != "" {
-						fmt.Printf("FLIPPED COIN sending status to %s\n", randomPeer)
-						startRumormongering(msg, exclusionList, randomPeer)
+						fmt.Printf("FLIPPED COIN sending rumor to %s\n", randomPeer)
+						startRumormongering(msg, randomPeer)
 					}
 				}
 			} else {
