@@ -67,7 +67,7 @@ function update() {
 		$("#applicationBox").show()
 		$(".nodeName").text(JSON.parse(id[0]))
 		const chatBox = document.getElementById("chatContent")
-		chatBox.innerHTML = ""
+		chatBox.innerHTML = "<h1>Messages</h1>"
 		JSON.parse(messages[0]).forEach(m => {
 			const elem = document.createElement("div")
 			const nameTag = document.createElement("span")
@@ -79,7 +79,7 @@ function update() {
 		})
 		
 		const peerBox = document.getElementById("peerContent")
-		peerBox.innerHTML = ""
+		peerBox.innerHTML = "<h1>Peers</h1>"
 		JSON.parse(nodes[0]).sort().forEach(n => {
 			const elem = document.createElement("div")
 			elem.appendChild(document.createTextNode(n))
