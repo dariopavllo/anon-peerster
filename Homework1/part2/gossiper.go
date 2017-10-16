@@ -153,8 +153,8 @@ func main() {
 	}
 
 	// Start anti-entropy routine
-	antiEntropyTicker := time.NewTicker(1 * time.Second)
 	go func() {
+		antiEntropyTicker := time.NewTicker(1 * time.Second)
 		for _ = range antiEntropyTicker.C {
 			Context.EventQueue <- func() {
 				// Executed on the main thread
@@ -197,7 +197,7 @@ func startRumormongering(msg *RumorMessage, destinationPeerAddress string) {
 	// Run listener in another thread
 	go func() {
 		var statusMsg *StatusPacket
-		select { // Whichever comes first...
+		select { // Whichever comes first (timeout or status message)...
 		case msg := <-statusChannel:
 			statusMsg = msg
 		case <-timeoutTimer:

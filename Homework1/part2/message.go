@@ -4,7 +4,7 @@ import (
 	"github.com/dedis/protobuf"
 )
 
-// ClientMessage represents a message exchange between a client and a peer
+// ClientMessage represents a message exchanged between a CLI client and a peer
 type ClientMessage struct {
 	Text string
 }

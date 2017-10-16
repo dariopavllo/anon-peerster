@@ -105,6 +105,9 @@ func (c *contextType) BuildRumorMessage(origin string, id uint32) *RumorMessage 
 	return rumor
 }
 
+// RandomPeer selects a random peer from the current set of peers.
+// exclusionList defines the set of peers to be excluded from the selection.
+// If no valid peer can be found, an empty string is returned.
 func (c *contextType) RandomPeer(exclusionList []string) string {
 	validPeers := make([]string, 0)
 	for peer := range c.PeerSet {
@@ -143,8 +146,8 @@ func (c *contextType) VectorClockEquals(other []PeerStatus) bool {
 }
 
 // VectorClockDifference returns the difference between two vector clocks.
-// The first argument represents the messages seen by this node (but not by the other node),
-// whereas the second argument represents the messages seen by the other  node, but not by this node.
+// The first return value represents the messages seen by this node (but not by the other node),
+// whereas the second return value represents the messages seen by the other  node, but not by this node.
 func (c *contextType) VectorClockDifference(other []PeerStatus) ([]PeerStatus, []PeerStatus) {
 
 	// The difference is computed in linear time by using hash sets
@@ -177,13 +180,9 @@ func (c *contextType) VectorClockDifference(other []PeerStatus) ([]PeerStatus, [
 	return otherDiff, thisDiff
 }
 
+// SendStatusMessage sends a status message to the given peer.
 func (c *contextType) SendStatusMessage(peerAddress string) {
 	statusMsg := c.BuildStatusMessage()
 	gossipMsg := GossipPacket{Status: statusMsg}
 	Context.GossipSocket.Send(Encode(&gossipMsg), peerAddress)
-}
-
-type PeerDescription struct {
-	Address string
-	Name string
 }
