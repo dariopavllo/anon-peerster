@@ -59,8 +59,8 @@ func main() {
 		fmt.Println(strings.Join(peerList, ","))
 	}
 
-	// Create the event queue as a channel of type Event
-	Context.EventQueue = make(chan func())
+	// Create the event queue as a buffered channel of type Event
+	Context.EventQueue = make(chan func(), 10)
 
 	// Define the handler for messages from other peerSet
 	Context.GossipSocket = MakeServerUdpSocket(Context.ThisNodeAddress)

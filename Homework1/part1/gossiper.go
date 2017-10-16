@@ -50,7 +50,7 @@ func main() {
 	}
 
 	// Create the event queue as a channel of type Event
-	eventQueue := make(chan Event)
+	eventQueue := make(chan Event, 10)
 
 	// Define the handler for messages from other peerSet
 	gossipSocket := MakeServerUdpSocket(*gossipIpPort)
