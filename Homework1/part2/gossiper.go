@@ -32,8 +32,9 @@ func main() {
 		FailOnError(errors.New("you must specify a name for this node"))
 	}
 	Context.ThisNodeName = *nodeName
-	//fmt.Printf("This node: %s listening on %s\n", *nodeName, *gossipIpPort)
 
+
+	rand.Seed(time.Now().UTC().UnixNano()) // Initialize random seed
 	Context.PeerSet = make(map[string]bool)
 	Context.Messages = make(map[string][]string)
 	Context.MessageLog = make([]MessageLogEntry, 0)
@@ -49,7 +50,7 @@ func main() {
 		}
 	}
 
-	// printPeerList prints the peerSet seen so far
+	// printPeerList prints the peers seen so far
 	printPeerList := func() {
 		peerList := make([]string, 0)
 		for address := range Context.PeerSet {

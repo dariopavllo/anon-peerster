@@ -40,7 +40,7 @@ func main() {
 		}
 	}
 
-	// printPeerList prints the peerSet seen so far
+	// printPeerList prints the peers seen so far
 	printPeerList := func() {
 		peerList := make([]string, 0)
 		for address := range peerSet {
