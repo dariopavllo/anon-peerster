@@ -170,6 +170,8 @@ func main() {
 	}
 }
 
+// startRumormongering forwards a rumor message to a peer, and the process is optionally repeated
+// with another peer according to the coin flip result.
 func startRumormongering(msg *RumorMessage, destinationPeerAddress string) {
 	if destinationPeerAddress == "" {
 		return
@@ -192,10 +194,10 @@ func startRumormongering(msg *RumorMessage, destinationPeerAddress string) {
 		}
 	}
 	Context.GossipSocket.Send(Encode(&fwdMessage), destinationPeerAddress)
-	timeoutTimer := time.After(1 * time.Second)
 
 	// Run listener in another thread
 	go func() {
+		timeoutTimer := time.After(1 * time.Second)
 		var statusMsg *StatusPacket
 		select { // Whichever comes first (timeout or status message)...
 		case msg := <-statusChannel:
@@ -232,6 +234,8 @@ func startRumormongering(msg *RumorMessage, destinationPeerAddress string) {
 	}()
 }
 
+// synchronizeMessages compares the vector clocks of this node and the given peer,
+// and starts a synchronization job if they differ.
 func synchronizeMessages(otherStatus []PeerStatus, destinationPeerAddress string) {
 	// If two peers do not agree on the set of messages -> begin exchange
 	otherSet, thisSet := Context.VectorClockDifference(otherStatus)

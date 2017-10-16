@@ -166,7 +166,7 @@ func (c *contextType) VectorClockDifference(other []PeerStatus) ([]PeerStatus, [
 			} else if uint32(len(messages)+1) < otherStatus.NextID {
 				thisDiff = append(thisDiff, PeerStatus{otherStatus.Identifier, uint32(len(messages) + 1)})
 			}
-		} else {
+		} else if otherStatus.NextID > 1 {
 			thisDiff = append(thisDiff, PeerStatus{otherStatus.Identifier, uint32(len(messages) + 1)})
 		}
 	}

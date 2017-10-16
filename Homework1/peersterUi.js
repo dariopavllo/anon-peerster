@@ -72,7 +72,7 @@ function update() {
 			const elem = document.createElement("div")
 			const nameTag = document.createElement("span")
 			const date = m.FirstSeen.slice(0, 10)
-			nameTag.appendChild(document.createTextNode(date + " | " + m.FromNode + " (" + m.FromAddress + ") (ID: " + m.SeqID + "): "))
+			nameTag.appendChild(document.createTextNode(date + " | " + m.FromNode + " (relay: " + m.FromAddress + ") (ID: " + m.SeqID + "): "))
 			elem.appendChild(nameTag)
 			elem.appendChild(document.createTextNode(m.Content))
 			chatBox.appendChild(elem)

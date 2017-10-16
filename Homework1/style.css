@@ -6,12 +6,11 @@ html {
 }
 
 body {
-	height: 98%;
+	height: 96%;
 	width: 98%;
 	margin: 1%;
 	padding: 0;
 	font-family: Helvetica, Verdana;
-	overflow: hidden;
 }
 
 #applicationBox {
