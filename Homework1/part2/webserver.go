@@ -13,6 +13,7 @@ func InitializeWebServer(port int) {
 	r.HandleFunc("/message", handle(handleMessages))
 	r.HandleFunc("/node", handle(handleNodes))
 	r.HandleFunc("/id", handle(handleId))
+	r.Handle("/", http.FileServer(http.Dir("webclient")))
 	go http.ListenAndServe(":" + fmt.Sprint(port), r)
 }
 

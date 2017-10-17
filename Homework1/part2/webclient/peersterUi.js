@@ -1,17 +1,14 @@
-let address = ""
 let timer = null
 
 $(document).ready(function(){
-    $("#connect").click(function(){
-		address = $("#connectionAddress").val()
-		update()
-    })
+	update()
+	timer = setInterval(update, 1000)
 	
 	$("#sendMessage").click(function() {
 		const msg = $("#message").val()
 		$.ajax({
 			type: 'POST',
-			url: "http://" + address + "/message",
+			url: "/message",
 			data: JSON.stringify(msg),
 			success: function() {
 				update()
@@ -27,7 +24,7 @@ $(document).ready(function(){
 		const peer = $("#newPeerAddress").val()
 		$.ajax({
 			type: 'POST',
-			url: "http://" + address + "/node",
+			url: "/node",
 			data: JSON.stringify(peer),
 			success: function() {
 				update()
@@ -43,7 +40,7 @@ $(document).ready(function(){
 		const name = $("#newName").val()
 		$.ajax({
 			type: 'POST',
-			url: "http://" + address + "/id",
+			url: "/id",
 			data: JSON.stringify(name),
 			success: function() {
 				update()
@@ -58,13 +55,11 @@ $(document).ready(function(){
 
 function update() {
 	$.when(
-		$.get("http://" + address + "/id"),
-		$.get("http://" + address + "/node"),
-		$.get("http://" + address + "/message")
+		$.get("/id"),
+		$.get("/node"),
+		$.get("/message")
 	)
 	.then(function(id, nodes, messages) {
-		$("#connectionBox").hide()
-		$("#applicationBox").show()
 		$(".nodeName").text(JSON.parse(id[0]))
 		const chatBox = document.getElementById("chatContent")
 		chatBox.innerHTML = "<h1>Messages</h1>"
@@ -85,18 +80,7 @@ function update() {
 			elem.appendChild(document.createTextNode(n))
 			peerBox.appendChild(elem)
 		})
-		
-		if (timer != null) {
-			clearInterval(timer)
-		}
-		timer = setInterval(update, 1000)		
 	}, function() {
-		$("#connectionBox").show()
-		$("#applicationBox").hide()
-		if (timer != null) {
-			clearInterval(timer)
-			timer = null
-		}
 		alert("Unable to connect")
 	})
 }
