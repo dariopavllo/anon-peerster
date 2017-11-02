@@ -4,16 +4,27 @@ import (
 	"errors"
 	"math/rand"
 	"time"
+	"fmt"
+)
+
+// Classes for peers
+const (
+	Manual = 0
+	Learned = 1
+	ShortCircuited = 2
 )
 
 type contextType struct {
-	EventQueue      chan func()
-	GossipSocket    Socket
-	PeerSet         map[string]bool
-	Messages        map[string][]string
-	ThisNodeName    string
-	ThisNodeAddress string
-	MessageLog      []MessageLogEntry
+	EventQueue      	chan func()
+	GossipSocket    	Socket
+	PeerSet         	map[string]int // The integer value represents the class
+	Messages        	map[string][]GossipMessageEntry
+	ThisNodeName    	string
+	ThisNodeAddress 	string
+	MessageLog      	[]MessageLogEntry
+	PrivateMessageLog   map[string][]MessageLogEntry
+	RoutingTable    	map[string]string
+	NoForward			bool
 
 	StatusSubscriptions map[string]func(statusMessage *StatusPacket)
 }
@@ -26,29 +37,47 @@ type MessageLogEntry struct {
 	Content     string
 }
 
+type GossipMessageEntry struct {
+	LastSender string
+	Text string
+}
+
 var Context contextType
 
-// AddNewMessage adds a new message to this gossiper (when received from a client) and returns its ID.
-func (c *contextType) AddNewMessage(message string) uint32 {
+// GetMyNextID returns the next ID of this node.
+func (c *contextType) GetMyNextID() uint32 {
 	messages, found := c.Messages[c.ThisNodeName]
 	var nextID int
 	if found {
 		nextID = len(messages) + 1
 	} else {
 		nextID = 1
-		c.Messages[c.ThisNodeName] = make([]string, 0)
+	}
+	return uint32(nextID)
+}
+
+// AddNewMessage adds a new message to this gossiper (when received from a client) and returns its ID.
+func (c *contextType) AddNewMessage(message string) uint32 {
+	nextID := c.GetMyNextID()
+	if nextID == 1 {
+		// Initialize structure on the first message
+		c.Messages[c.ThisNodeName] = make([]GossipMessageEntry, 0)
 	}
 
-	c.Messages[c.ThisNodeName] = append(c.Messages[c.ThisNodeName], message)
-	c.MessageLog = append(c.MessageLog,
-		MessageLogEntry{time.Now(), c.ThisNodeName, uint32(nextID), c.ThisNodeAddress, message})
-	return uint32(nextID)
+	c.Messages[c.ThisNodeName] = append(c.Messages[c.ThisNodeName], GossipMessageEntry{"", message})
+
+	// Display the message to the user only if it is not a route message
+	if message != "" {
+		c.MessageLog = append(c.MessageLog,
+			MessageLogEntry{time.Now(), c.ThisNodeName, nextID, c.ThisNodeAddress, message})
+	}
+	return nextID
 }
 
 // TryInsertMessage inserts a new message in order.
 // Returns true if the message is inserted, and false if it was already seen.
 // An error is returned if the supplied ID is not the expected next ID (i.e. if the message is out of order)
-func (c *contextType) TryInsertMessage(origin string, originAddress string, message string, id uint32) (bool, error) {
+func (c *contextType) TryInsertMessage(origin string, originAddress string, message string, id uint32, previousAddress string) (bool, error) {
 	if id == 0 {
 		return false, errors.New("message IDs must start from 1")
 	}
@@ -58,10 +87,25 @@ func (c *contextType) TryInsertMessage(origin string, originAddress string, mess
 		expectedNextID := uint32(len(messages) + 1)
 		if id == expectedNextID {
 			// New message (in order)
-			c.Messages[origin] = append(c.Messages[origin], message)
-			c.MessageLog = append(c.MessageLog,
-				MessageLogEntry{time.Now(), origin, id, originAddress, message})
+			c.Messages[origin] = append(c.Messages[origin], GossipMessageEntry{originAddress, message})
+
+			// Display the message to the user only if it is not a route message
+			if message != "" {
+				c.MessageLog = append(c.MessageLog,
+					MessageLogEntry{time.Now(), origin, id, originAddress, message})
+			}
+
+			// Update route unconditionally
+			c.RoutingTable[origin] = originAddress
+
 			return true, nil
+		} else if id == expectedNextID - 1 {
+			// Already seen (last message)
+			if previousAddress == "" {
+				// Direct route message -> override route
+				c.RoutingTable[origin] = originAddress
+			}
+			return false, nil
 		} else if id < expectedNextID {
 			// Already seen
 			return false, nil
@@ -72,10 +116,17 @@ func (c *contextType) TryInsertMessage(origin string, originAddress string, mess
 	} else {
 		// First message from that origin
 		if id == 1 {
-			c.Messages[origin] = make([]string, 1)
-			c.Messages[origin][0] = message
-			c.MessageLog = append(c.MessageLog,
-				MessageLogEntry{time.Now(), origin, 1, originAddress, message})
+			c.Messages[origin] = make([]GossipMessageEntry, 1)
+			c.Messages[origin][0] = GossipMessageEntry{originAddress, message}
+			// Display the message to the user only if it is not a route message
+			if message != "" {
+				c.MessageLog = append(c.MessageLog,
+					MessageLogEntry{time.Now(), origin, 1, originAddress, message})
+			}
+
+			// Add route
+			c.RoutingTable[origin] = originAddress
+
 			return true, nil
 		}
 
@@ -100,9 +151,65 @@ func (c *contextType) BuildStatusMessage() *StatusPacket {
 // BuildRumorMessage returns a rumor message with the given (origin, ID) pair.
 func (c *contextType) BuildRumorMessage(origin string, id uint32) *RumorMessage {
 	rumor := &RumorMessage{Origin: origin}
-	rumor.PeerMessage.Text = c.Messages[origin][id-1]
+	rumor.PeerMessage.Text = c.Messages[origin][id-1].Text
 	rumor.PeerMessage.ID = id
+	rumor.LastIP, rumor.LastPort = SplitAddress(c.Messages[origin][id-1].LastSender)
 	return rumor
+}
+
+// BuildPrivateMessage returns a private message with the given destination and content.
+func (c *contextType) BuildPrivateMessage(destinationName string, message string) *PrivateMessage {
+	private := &PrivateMessage{Origin: c.ThisNodeName, Dest: destinationName, HopLimit: 10}
+	private.PeerMessage.Text = message
+	private.PeerMessage.ID = 0
+	return private
+}
+
+func (c *contextType) ForwardPrivateMessage(sender string, msg *PrivateMessage, previousSender string) {
+	if msg.Dest == c.ThisNodeName {
+		// The message has reached its destination
+		fmt.Printf("PRIVATE \"%s\" from %s\n", msg.PeerMessage.Text, msg.Origin)
+		c.LogPrivateMessage(sender, msg)
+
+		// If this is a direct message, update the routing table
+		if previousSender == "" {
+			c.RoutingTable[msg.Origin] = sender
+		}
+	} else {
+		if Context.NoForward {
+			return
+		}
+
+		if msg.HopLimit > 0 {
+			msg.HopLimit--
+
+			// Find next hop
+			next, found := c.RoutingTable[msg.Dest]
+			if found {
+				outMsg := GossipPacket{Private: msg}
+				fmt.Printf("PRIVATE FORWARD \"%s\" from %s to %s\n", msg.PeerMessage.Text, msg.Origin, next)
+				Context.GossipSocket.Send(Encode(&outMsg), next)
+			}
+		}
+	}
+	// In all other cases (hop limit reached, no route found), the message is discarded
+}
+
+func (c *contextType) LogPrivateMessage(sender string, msg *PrivateMessage) {
+	var targetName string
+	if msg.Origin == c.ThisNodeName {
+		targetName = msg.Dest
+	} else {
+		targetName = msg.Origin
+	}
+
+	_, found := c.PrivateMessageLog[targetName]
+	if !found {
+		c.PrivateMessageLog[targetName] = make([]MessageLogEntry, 0)
+	}
+
+	entry := MessageLogEntry{time.Now(), msg.Origin, 0, sender, msg.PeerMessage.Text}
+	c.PrivateMessageLog[targetName] = append(c.PrivateMessageLog[targetName], entry)
 }
 
 // RandomPeer selects a random peer from the current set of peers.
@@ -185,4 +292,14 @@ func (c *contextType) SendStatusMessage(peerAddress string) {
 	statusMsg := c.BuildStatusMessage()
 	gossipMsg := GossipPacket{Status: statusMsg}
 	Context.GossipSocket.Send(Encode(&gossipMsg), peerAddress)
+}
+
+// BroadcastRoutes creates a new route rumor message and broadcasts it to all peers.
+func (c *contextType) BroadcastRoutes() {
+	id := c.AddNewMessage("")
+	for peerAddress := range c.PeerSet {
+		rumor := c.BuildRumorMessage(c.ThisNodeName, id)
+		outMsg := GossipPacket{Rumor: rumor}
+		c.GossipSocket.Send(Encode(&outMsg), peerAddress)
+	}
 }

@@ -15,6 +15,7 @@ func main() {
 	nodeName := flag.String("name", "", "name of this node")
 	peersParams := flag.String("peers", "", "peers separated by commas")
 	rTimer := flag.Int("rtimer", 60, "seconds between route rumor messages")
+	noForward := flag.Bool("noforward", false, "disable forwarding of rumor messages")
 
 	flag.Parse()
 
@@ -27,13 +28,15 @@ func main() {
 		FailOnError(errors.New("you must specify a name for this node"))
 	}
 	Context.ThisNodeName = *nodeName
-
+	Context.NoForward = *noForward
 
 	rand.Seed(time.Now().UTC().UnixNano()) // Initialize random seed
-	Context.PeerSet = make(map[string]bool)
-	Context.Messages = make(map[string][]string)
+	Context.PeerSet = make(map[string]int)
+	Context.Messages = make(map[string][]GossipMessageEntry)
 	Context.MessageLog = make([]MessageLogEntry, 0)
+	Context.PrivateMessageLog = make(map[string][]MessageLogEntry)
 	Context.StatusSubscriptions = make(map[string]func(*StatusPacket))
+	Context.RoutingTable = make(map[string]string)
 
 	// Check if all peer addresses are valid, and resolve them if they contain domain names
 	for _, peerAddress := range strings.Split(*peersParams, ",") {
@@ -41,7 +44,7 @@ func main() {
 			// Check if the address is valid and resolve its name
 			addr, err := CheckAndResolveAddress(peerAddress)
 			FailOnError(err)
-			Context.PeerSet[addr] = true
+			Context.PeerSet[addr] = Manual
 		}
 	}
 
@@ -75,7 +78,9 @@ func main() {
 		}
 
 		// If the gossiper has not been seen yet: add it to the set
-		Context.PeerSet[sender] = true
+		if _, found := Context.PeerSet[sender]; !found {
+			Context.PeerSet[sender] = Learned
+		}
 
 		if msg.Rumor != nil {
 			// Received a rumor message from a peer
@@ -83,14 +88,35 @@ func main() {
 			fmt.Printf("RUMOR origin %s from %s ID %d contents %s\n", m.Origin, sender, m.PeerMessage.ID, m.PeerMessage.Text)
 			printPeerList()
 
-			inserted, _ := Context.TryInsertMessage(m.Origin, sender, m.PeerMessage.Text, m.PeerMessage.ID)
+			lastAddress := AddressStructToString(m.LastIP, m.LastPort)
+			inserted, _ := Context.TryInsertMessage(m.Origin, sender, m.PeerMessage.Text, m.PeerMessage.ID, lastAddress)
 			Context.SendStatusMessage(sender) // Send status message in order to acknowledge
-			if inserted {
+
+			if inserted && (!Context.NoForward || m.IsRouteMessage()) {
 				// This message has not been seen before
-				randomPeer := Context.RandomPeer([]string{sender})
-				if randomPeer != "" {
-					fmt.Printf("MONGERING with %s\n", randomPeer)
-					startRumormongering(m, randomPeer)
+
+				if lastAddress != "" {
+					if _, found := Context.PeerSet[lastAddress]; !found {
+						Context.PeerSet[lastAddress] = ShortCircuited
+					}
+				}
+
+				m.LastIP, m.LastPort = SplitAddress(sender)
+				if m.IsRouteMessage() {
+					// Forward it to everyone
+					fwdMessage := GossipPacket{Rumor: m}
+					for peerAddress := range Context.PeerSet {
+						if peerAddress != sender {
+							Context.GossipSocket.Send(Encode(&fwdMessage), peerAddress)
+						}
+					}
+				} else {
+					// Normal rumormongering process
+					randomPeer := Context.RandomPeer([]string{sender})
+					if randomPeer != "" {
+						fmt.Printf("MONGERING with %s\n", randomPeer)
+						startRumormongering(m, randomPeer)
+					}
 				}
 			}
 		}
@@ -111,6 +137,17 @@ func main() {
 				synchronizeMessages(m.Want, sender)
 			}
 		}
+
+		if msg.Private != nil {
+			if msg.Private.LastIP != nil && msg.Private.LastPort != nil {
+				if _, found := Context.PeerSet[sender]; !found {
+					Context.PeerSet[sender] = ShortCircuited
+				}
+			}
+			previousSender := AddressStructToString(msg.Private.LastIP, msg.Private.LastPort)
+			msg.Private.LastIP, msg.Private.LastPort = SplitAddress(sender)
+			Context.ForwardPrivateMessage(sender, msg.Private, previousSender)
+		}
 	}
 	// Start listening for peer messages in another thread
 	peerHandler.Start()
@@ -130,6 +167,19 @@ func main() {
 			}
 		}
 	}()
+
+	// Start route broadcasting routine
+	go func() {
+		routeTicker := time.NewTicker(time.Duration(*rTimer) * time.Second)
+		for _ = range routeTicker.C {
+			Context.EventQueue <- func() {
+				// Executed on the main thread
+				Context.BroadcastRoutes()
+			}
+		}
+	}()
+	// Additionally, broadcast routes upon start
+	Context.BroadcastRoutes()
 
 	// Main event loop
 	for eventHandler := range Context.EventQueue {
@@ -214,6 +264,9 @@ func synchronizeMessages(otherStatus []PeerStatus, destinationPeerAddress string
 			inSync = false
 			rumor := Context.BuildRumorMessage(mismatch.Identifier, id)
 			outMsg := GossipPacket{Rumor: rumor}
+			if Context.NoForward && !rumor.IsRouteMessage() {
+				break
+			}
 			fmt.Printf("MONGERING with %s\n", destinationPeerAddress)
 			Context.GossipSocket.Send(Encode(&outMsg), destinationPeerAddress)
 		}
