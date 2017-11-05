@@ -10,7 +10,7 @@ import (
 )
 
 func main() {
-	httpPort := flag.Int("webPort", 0, "port for the HTTP client interface")
+	uiPort := flag.Int("UIPort", 0, "port for the HTTP/CLI client")
 	gossipIpPort := flag.String("gossipPort", "", "address/port for the gossiper")
 	nodeName := flag.String("name", "", "name of this node")
 	peersParams := flag.String("peers", "", "peers separated by commas")
@@ -153,8 +153,8 @@ func main() {
 	peerHandler.Start()
 
 	// If a HTTP UI port is given, define the handler for client requests
-	if *httpPort != 0 {
-		InitializeWebServer(*httpPort)
+	if *uiPort != 0 {
+		InitializeWebServer(*uiPort)
 	}
 
 	// Start anti-entropy routine
