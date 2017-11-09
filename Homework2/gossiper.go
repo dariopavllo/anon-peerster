@@ -11,7 +11,7 @@ import (
 
 func main() {
 	uiPort := flag.Int("UIPort", 0, "port for the HTTP/CLI client")
-	gossipIpPort := flag.String("gossipPort", "", "address/port for the gossiper")
+	gossipIpPort := flag.String("gossipAddr", "", "address/port for the gossiper")
 	nodeName := flag.String("name", "", "name of this node")
 	peersParams := flag.String("peers", "", "peers separated by commas")
 	rTimer := flag.Int("rtimer", 60, "seconds between route rumor messages")
@@ -20,7 +20,7 @@ func main() {
 	flag.Parse()
 
 	if *gossipIpPort == "" {
-		FailOnError(errors.New("you must supply a gossip address/port"))
+		FailOnError(errors.New("you must supply a gossip address/port (gossipAddr). Use \":PORT\" to listen to all interfaces."))
 	}
 	Context.ThisNodeAddress = *gossipIpPort
 
@@ -85,11 +85,11 @@ func main() {
 		if msg.Rumor != nil {
 			// Received a rumor message from a peer
 			m := msg.Rumor
-			fmt.Printf("RUMOR origin %s from %s ID %d contents %s\n", m.Origin, sender, m.PeerMessage.ID, m.PeerMessage.Text)
+			fmt.Printf("RUMOR origin %s from %s ID %d contents %s\n", m.Origin, sender, m.ID, m.Text)
 			printPeerList()
 
 			lastAddress := AddressStructToString(m.LastIP, m.LastPort)
-			inserted, _ := Context.TryInsertMessage(m.Origin, sender, m.PeerMessage.Text, m.PeerMessage.ID, lastAddress)
+			inserted, _ := Context.TryInsertMessage(m.Origin, sender, m.Text, m.ID, lastAddress)
 			Context.SendStatusMessage(sender) // Send status message in order to acknowledge
 
 			if inserted && (!Context.NoForward || m.IsRouteMessage()) {
@@ -139,14 +139,7 @@ func main() {
 		}
 
 		if msg.Private != nil {
-			if msg.Private.LastIP != nil && msg.Private.LastPort != nil {
-				if _, found := Context.PeerSet[sender]; !found {
-					Context.PeerSet[sender] = ShortCircuited
-				}
-			}
-			previousSender := AddressStructToString(msg.Private.LastIP, msg.Private.LastPort)
-			msg.Private.LastIP, msg.Private.LastPort = SplitAddress(sender)
-			Context.ForwardPrivateMessage(sender, msg.Private, previousSender)
+			Context.ForwardPrivateMessage(sender, msg.Private)
 		}
 	}
 	// Start listening for peer messages in another thread

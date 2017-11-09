@@ -201,7 +201,7 @@ func handlePrivateMessages(w http.ResponseWriter, r *http.Request) {
 			fmt.Printf("PRIVATE SEND \"%s\" TO %s\n", msg.Content, msg.Destination)
 			outMsg := Context.BuildPrivateMessage(msg.Destination, msg.Content)
 			Context.LogPrivateMessage(Context.ThisNodeAddress, outMsg)
-			Context.ForwardPrivateMessage(Context.ThisNodeAddress, outMsg, "")
+			Context.ForwardPrivateMessage(Context.ThisNodeAddress, outMsg)
 		}
 
 	default:

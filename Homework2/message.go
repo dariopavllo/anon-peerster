@@ -11,29 +11,23 @@ type ClientMessage struct {
 }
 
 type RumorMessage struct {
-	Origin      string
-	PeerMessage struct {
-		ID   uint32
-		Text string
-	}
+	Origin		string
+	ID			uint32
+	Text		string
 	LastIP		*net.IP
 	LastPort	*int
 }
 
 func (m *RumorMessage) IsRouteMessage() bool {
-	return m.PeerMessage.Text == ""
+	return m.Text == ""
 }
 
 type PrivateMessage struct {
 	Origin      string
-	Dest        string
+	ID			uint32
+	Text		string
+	Destination	string
 	HopLimit    uint32
-	PeerMessage struct {
-		ID   uint32
-		Text string
-	}
-	LastIP		*net.IP
-	LastPort	*int
 }
 
 type PeerStatus struct {

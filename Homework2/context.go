@@ -151,30 +151,25 @@ func (c *contextType) BuildStatusMessage() *StatusPacket {
 // BuildRumorMessage returns a rumor message with the given (origin, ID) pair.
 func (c *contextType) BuildRumorMessage(origin string, id uint32) *RumorMessage {
 	rumor := &RumorMessage{Origin: origin}
-	rumor.PeerMessage.Text = c.Messages[origin][id-1].Text
-	rumor.PeerMessage.ID = id
+	rumor.Text = c.Messages[origin][id-1].Text
+	rumor.ID = id
 	rumor.LastIP, rumor.LastPort = SplitAddress(c.Messages[origin][id-1].LastSender)
 	return rumor
 }
 
 // BuildPrivateMessage returns a private message with the given destination and content.
 func (c *contextType) BuildPrivateMessage(destinationName string, message string) *PrivateMessage {
-	private := &PrivateMessage{Origin: c.ThisNodeName, Dest: destinationName, HopLimit: 10}
-	private.PeerMessage.Text = message
-	private.PeerMessage.ID = 0
+	private := &PrivateMessage{Origin: c.ThisNodeName, Destination: destinationName, HopLimit: 10}
+	private.Text = message
+	private.ID = 0
 	return private
 }
 
-func (c *contextType) ForwardPrivateMessage(sender string, msg *PrivateMessage, previousSender string) {
-	if msg.Dest == c.ThisNodeName {
+func (c *contextType) ForwardPrivateMessage(sender string, msg *PrivateMessage) {
+	if msg.Destination == c.ThisNodeName {
 		// The message has reached its destination
-		fmt.Printf("PRIVATE \"%s\" from %s\n", msg.PeerMessage.Text, msg.Origin)
+		fmt.Printf("PRIVATE \"%s\" from %s\n", msg.Text, msg.Origin)
 		c.LogPrivateMessage(sender, msg)
-
-		// If this is a direct message, update the routing table
-		if previousSender == "" {
-			c.RoutingTable[msg.Origin] = sender
-		}
 	} else {
 		if Context.NoForward {
 			return
@@ -184,10 +179,10 @@ func (c *contextType) ForwardPrivateMessage(sender string, msg *PrivateMessage, 
 			msg.HopLimit--
 
 			// Find next hop
-			next, found := c.RoutingTable[msg.Dest]
+			next, found := c.RoutingTable[msg.Destination]
 			if found {
 				outMsg := GossipPacket{Private: msg}
-				fmt.Printf("PRIVATE FORWARD \"%s\" from %s to %s\n", msg.PeerMessage.Text, msg.Origin, next)
+				fmt.Printf("PRIVATE FORWARD \"%s\" from %s to %s\n", msg.Text, msg.Origin, next)
 				Context.GossipSocket.Send(Encode(&outMsg), next)
 			}
 		}
@@ -198,7 +193,7 @@ func (c *contextType) ForwardPrivateMessage(sender string, msg *PrivateMessage, 
 func (c *contextType) LogPrivateMessage(sender string, msg *PrivateMessage) {
 	var targetName string
 	if msg.Origin == c.ThisNodeName {
-		targetName = msg.Dest
+		targetName = msg.Destination
 	} else {
 		targetName = msg.Origin
 	}
@@ -208,7 +203,7 @@ func (c *contextType) LogPrivateMessage(sender string, msg *PrivateMessage) {
 		c.PrivateMessageLog[targetName] = make([]MessageLogEntry, 0)
 	}
 
-	entry := MessageLogEntry{time.Now(), msg.Origin, 0, sender, msg.PeerMessage.Text}
+	entry := MessageLogEntry{time.Now(), msg.Origin, 0, sender, msg.Text}
 	c.PrivateMessageLog[targetName] = append(c.PrivateMessageLog[targetName], entry)
 }
 
