@@ -127,6 +127,7 @@ func (c *contextType) TryInsertMessage(origin string, originAddress string, mess
 
 			// Add route
 			c.RoutingTable[origin] = originAddress
+			fmt.Printf("DSDV %s:%s\n", origin, originAddress)
 
 			return true, nil
 		}
@@ -169,7 +170,7 @@ func (c *contextType) BuildPrivateMessage(destinationName string, message string
 func (c *contextType) ForwardPrivateMessage(sender string, msg *PrivateMessage) {
 	if msg.Destination == c.ThisNodeName {
 		// The message has reached its destination
-		fmt.Printf("PRIVATE \"%s\" from %s\n", msg.Text, msg.Origin)
+		fmt.Printf("PRIVATE: %s:%d:%s", msg.Origin, msg.HopLimit, msg.Text)
 		c.LogPrivateMessage(sender, msg)
 	} else {
 		if Context.NoForward {
