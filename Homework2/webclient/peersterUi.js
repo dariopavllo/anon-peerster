@@ -102,7 +102,7 @@ function update() {
 		})
 		
 		const peerBox = document.getElementById("peerContent")
-		peerBox.innerHTML = "<h1>Peers</h1>"
+		peerBox.innerHTML = "<h2>Peers</h2>"
 		JSON.parse(nodes[0]).sort((x, y) => x.Address.localeCompare(y.Address)).forEach(n => {
 			const elem = document.createElement("div")
 			const deleteButton = document.createElement("span")
@@ -139,7 +139,7 @@ function update() {
 		})
 		
 		const routeBox = document.getElementById("routeContent")
-		routeBox.innerHTML = "<h1>Known nodes</h1>"
+		routeBox.innerHTML = "<h2>Known nodes</h2>"
 		JSON.parse(routes[0]).sort((x, y) => x.Origin.localeCompare(y.Origin)).forEach(route => {
 			const elem = document.createElement("div")
 			const selectNode = document.createElement("span")

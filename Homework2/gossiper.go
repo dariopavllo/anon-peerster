@@ -16,6 +16,7 @@ func main() {
 	peersParams := flag.String("peers", "", "peers separated by commas")
 	rTimer := flag.Int("rtimer", 60, "seconds between route rumor messages")
 	noForward := flag.Bool("noforward", false, "disable forwarding of rumor messages")
+	disableTraversal := flag.Bool("disableTraversal", false, "disable NAT traversal")
 
 	flag.Parse()
 
@@ -29,6 +30,7 @@ func main() {
 	}
 	Context.ThisNodeName = *nodeName
 	Context.NoForward = *noForward
+	Context.DisableTraversal = *disableTraversal
 
 	rand.Seed(time.Now().UTC().UnixNano()) // Initialize random seed
 	Context.PeerSet = make(map[string]int)
@@ -95,7 +97,7 @@ func main() {
 			if inserted && (!Context.NoForward || m.IsRouteMessage()) {
 				// This message has not been seen before
 
-				if lastAddress != "" {
+				if !Context.DisableTraversal && lastAddress != "" {
 					if _, found := Context.PeerSet[lastAddress]; !found {
 						Context.PeerSet[lastAddress] = ShortCircuited
 					}
@@ -253,16 +255,15 @@ func synchronizeMessages(otherStatus []PeerStatus, destinationPeerAddress string
 	inSync := true
 	for _, mismatch := range otherSet {
 		// The peer has not seen some messages that this node has seen -> send them in order
-		for id := mismatch.NextID; id <= uint32(len(Context.Messages[mismatch.Identifier])); id++ {
-			inSync = false
-			rumor := Context.BuildRumorMessage(mismatch.Identifier, id)
-			outMsg := GossipPacket{Rumor: rumor}
-			if Context.NoForward && !rumor.IsRouteMessage() {
-				break
-			}
-			fmt.Printf("MONGERING with %s\n", destinationPeerAddress)
-			Context.GossipSocket.Send(Encode(&outMsg), destinationPeerAddress)
+		id := mismatch.NextID
+		inSync = false
+		rumor := Context.BuildRumorMessage(mismatch.Identifier, id)
+		outMsg := GossipPacket{Rumor: rumor}
+		if Context.NoForward && !rumor.IsRouteMessage() {
+			break
 		}
+		fmt.Printf("MONGERING with %s\n", destinationPeerAddress)
+		Context.GossipSocket.Send(Encode(&outMsg), destinationPeerAddress)
 	}
 	if len(thisSet) > 0 {
 		// This node has not seen some messages that the peer has seen -> send status message to peer

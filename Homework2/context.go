@@ -25,6 +25,7 @@ type contextType struct {
 	PrivateMessageLog   map[string][]MessageLogEntry
 	RoutingTable    	map[string]string
 	NoForward			bool
+	DisableTraversal	bool
 
 	StatusSubscriptions map[string]func(statusMessage *StatusPacket)
 }
@@ -101,7 +102,7 @@ func (c *contextType) TryInsertMessage(origin string, originAddress string, mess
 			return true, nil
 		} else if id == expectedNextID - 1 {
 			// Already seen (last message)
-			if previousAddress == "" {
+			if !c.DisableTraversal && previousAddress == "" {
 				// Direct route message -> override route
 				c.RoutingTable[origin] = originAddress
 			}
