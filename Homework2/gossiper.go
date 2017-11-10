@@ -109,6 +109,7 @@ func main() {
 					fwdMessage := GossipPacket{Rumor: m}
 					for peerAddress := range Context.PeerSet {
 						if peerAddress != sender {
+							fmt.Printf("MONGERING ROUTE with %s\n", peerAddress)
 							Context.GossipSocket.Send(Encode(&fwdMessage), peerAddress)
 						}
 					}
@@ -116,7 +117,7 @@ func main() {
 					// Normal rumormongering process
 					randomPeer := Context.RandomPeer([]string{sender})
 					if randomPeer != "" {
-						fmt.Printf("MONGERING with %s\n", randomPeer)
+						fmt.Printf("MONGERING TEXT with %s\n", randomPeer)
 						startRumormongering(m, randomPeer)
 					}
 				}
@@ -262,7 +263,11 @@ func synchronizeMessages(otherStatus []PeerStatus, destinationPeerAddress string
 		if Context.NoForward && !rumor.IsRouteMessage() {
 			break
 		}
-		fmt.Printf("MONGERING with %s\n", destinationPeerAddress)
+		if rumor.IsRouteMessage() {
+			fmt.Printf("MONGERING ROUTE with %s\n", destinationPeerAddress)
+		} else {
+			fmt.Printf("MONGERING TEXT with %s\n", destinationPeerAddress)
+		}
 		Context.GossipSocket.Send(Encode(&outMsg), destinationPeerAddress)
 	}
 	if len(thisSet) > 0 {

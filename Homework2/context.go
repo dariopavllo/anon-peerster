@@ -98,6 +98,7 @@ func (c *contextType) TryInsertMessage(origin string, originAddress string, mess
 
 			// Update route unconditionally
 			c.RoutingTable[origin] = originAddress
+			fmt.Printf("DSDV %s: %s\n", origin, originAddress)
 
 			return true, nil
 		} else if id == expectedNextID - 1 {
@@ -105,6 +106,7 @@ func (c *contextType) TryInsertMessage(origin string, originAddress string, mess
 			if !c.DisableTraversal && previousAddress == "" {
 				// Direct route message -> override route
 				c.RoutingTable[origin] = originAddress
+				fmt.Printf("DIRECT-ROUTE FOR %s: %s\n", origin, originAddress)
 			}
 			return false, nil
 		} else if id < expectedNextID {
@@ -127,7 +129,7 @@ func (c *contextType) TryInsertMessage(origin string, originAddress string, mess
 
 			// Add route
 			c.RoutingTable[origin] = originAddress
-			fmt.Printf("DSDV %s:%s\n", origin, originAddress)
+			fmt.Printf("DSDV %s: %s\n", origin, originAddress)
 
 			return true, nil
 		}
