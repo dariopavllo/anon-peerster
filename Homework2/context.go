@@ -176,6 +176,7 @@ func (c *contextType) ForwardPrivateMessage(sender string, msg *PrivateMessage) 
 		c.LogPrivateMessage(sender, msg)
 	} else {
 		if Context.NoForward {
+			fmt.Printf("Not forwarding private message \"%s\" from %s to %s (noforward set)\n", msg.Text, msg.Origin, msg.Destination)
 			return
 		}
 
@@ -188,7 +189,11 @@ func (c *contextType) ForwardPrivateMessage(sender string, msg *PrivateMessage) 
 				outMsg := GossipPacket{Private: msg}
 				fmt.Printf("PRIVATE FORWARD \"%s\" from %s to %s\n", msg.Text, msg.Origin, next)
 				Context.GossipSocket.Send(Encode(&outMsg), next)
+			} else {
+				fmt.Printf("Not forwarding private message \"%s\" from %s to %s (no route found)\n", msg.Text, msg.Origin, msg.Destination)
 			}
+		} else {
+			fmt.Printf("Not forwarding private message \"%s\" from %s to %s (TTL exceeded)\n", msg.Text, msg.Origin, msg.Destination)
 		}
 	}
 	// In all other cases (hop limit reached, no route found), the message is discarded
