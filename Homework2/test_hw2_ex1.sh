@@ -57,6 +57,6 @@ fail(){
   exit 1
 }
 
-grep -q "DSDV E:127.0.0.1:10002" A.log || fail "B doesn't see D through B"
-grep -q "DSDV D:127.0.0.1:10006" B.log || fail "B doesn't see D through B"
-grep -q "DSDV E:127.0.0.1:10008" B.log || fail "B doesn't see E through B"
+grep -q "DSDV E: 127.0.0.1:10002" A.log || fail "B doesn't see D through B"
+grep -q "DSDV D: 127.0.0.1:10006" B.log || fail "B doesn't see D through B"
+grep -q "DSDV E: 127.0.0.1:10008" B.log || fail "B doesn't see E through B"
