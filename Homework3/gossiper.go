@@ -38,7 +38,11 @@ func main() {
 	Context.MessageLog = make([]MessageLogEntry, 0)
 	Context.PrivateMessageLog = make(map[string][]MessageLogEntry)
 	Context.StatusSubscriptions = make(map[string]func(*StatusPacket))
+	Context.DownloadSubscriptions = make(map[string]func([]byte))
 	Context.RoutingTable = make(map[string]string)
+	Context.SharedFiles = make([]*SharedFile, 0)
+	Context.ChunkDatabase = make(map[string][]byte)
+	Context.InitializeFileDatabase()
 
 	// Check if all peer addresses are valid, and resolve them if they contain domain names
 	for _, peerAddress := range strings.Split(*peersParams, ",") {
@@ -146,11 +150,11 @@ func main() {
 		}
 
 		if msg.DataReq != nil {
-			Context.ForwardDataRequest(sender, msg.DataReq)
+			Context.ForwardDataRequest(msg.DataReq)
 		}
 
 		if msg.DataRep != nil {
-			Context.ForwardDataReply(sender, msg.DataRep)
+			Context.ForwardDataReply(msg.DataRep)
 		}
 	}
 	// Start listening for peer messages in another thread

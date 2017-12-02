@@ -11,17 +11,19 @@ import (
 type SharedFile struct {
 	FileName string
 	FileSize int
-	MetaFile []byte
-	MetaHash []byte
+	MetaFile []byte // Meta file (up to 8 KB in size)
+	MetaHash []byte // Hash of the metafile
 }
 
+const DOWNLOAD_DIR = "_Downloads"
+const CHUNK_SIZE = 8192
+
 func BuildMetadata(name string, content []byte) *SharedFile {
-	chunkSize := 8192
-	numChunks := (len(content) + chunkSize - 1) / chunkSize // Integer round up
+	numChunks := (len(content) + CHUNK_SIZE - 1) / CHUNK_SIZE // Integer round up
 	chunkHashes := make([]byte, sha256.Size*numChunks)
 	for i := 0; i < numChunks; i++ {
-		start := i * chunkSize     // Inclusive
-		end := (i + 1) * chunkSize // Exclusive
+		start := i * CHUNK_SIZE     // Inclusive
+		end := (i + 1) * CHUNK_SIZE // Exclusive
 		if end > len(content) {
 			end = len(content)
 		}
@@ -32,17 +34,28 @@ func BuildMetadata(name string, content []byte) *SharedFile {
 	}
 
 	totalHash := sha256.Sum256(chunkHashes)
-	fmt.Printf("Hash: %s\n", hex.EncodeToString(totalHash[:]))
+	fmt.Printf("Hash for %s: %s\n", name, hex.EncodeToString(totalHash[:]))
 	return &SharedFile{name, len(content), chunkHashes, totalHash[:]}
 }
 
 func SaveFile(name string, content []byte) {
-	dir := "_Downloads/" + Context.ThisNodeName
+	dir := DOWNLOAD_DIR + "/" + Context.ThisNodeName
 	os.MkdirAll(dir, os.ModePerm)
 	ioutil.WriteFile(dir+"/"+name, content, 0644)
 }
 
 func LoadFile(name string) ([]byte, error) {
-	dir := "_Downloads/" + Context.ThisNodeName
+	dir := DOWNLOAD_DIR + "/" + Context.ThisNodeName
 	return ioutil.ReadFile(dir + "/" + name)
+}
+
+func ListFiles() []string {
+	dir := DOWNLOAD_DIR + "/" + Context.ThisNodeName
+	os.MkdirAll(dir, os.ModePerm)
+	files, _ := ioutil.ReadDir(dir)
+	result := make([]string, len(files))
+	for i, file := range files {
+		result[i] = file.Name()
+	}
+	return result
 }

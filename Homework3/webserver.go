@@ -30,8 +30,7 @@ func handle(callback func(http.ResponseWriter, *http.Request)) func(http.Respons
 	// All requests are sent to the event queue and handled in the main event loop (i.e. main thread).
 	// After the request is processed, the web server thread is unlocked and proceeds
 	return func(w http.ResponseWriter, r *http.Request) {
-		done := make(chan bool)
-		Context.EventQueue <- func() {
+		Context.RunSync(func() {
 			// Enable CORS for all requests
 			w.Header().Set("Access-Control-Allow-Origin", "*")
 			if r.Method == "OPTIONS" {
@@ -41,9 +40,7 @@ func handle(callback func(http.ResponseWriter, *http.Request)) func(http.Respons
 			} else {
 				callback(w, r)
 			}
-			done <- true
-		}
-		<-done // Proceed once the request has been handled
+		})
 	}
 }
 
@@ -264,6 +261,7 @@ func handleFileDownload(w http.ResponseWriter, r *http.Request) {
 				done <- true
 			})
 		}
+		// Put the HTTP request on hold until the file is ready for download
 		<-done
 
 		if resultError != nil {
@@ -272,7 +270,7 @@ func handleFileDownload(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		http.ServeFile(w, r, "files/"+Context.ThisNodeName+"/"+fileName)
+		http.ServeFile(w, r, DOWNLOAD_DIR+"/"+Context.ThisNodeName+"/"+fileName)
 
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)

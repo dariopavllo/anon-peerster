@@ -1,15 +1,15 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"flag"
 	"fmt"
-	"net/http"
-	"encoding/json"
-	"bytes"
 	"io/ioutil"
 	"mime/multipart"
-	"os"
+	"net/http"
 	"net/url"
+	"os"
 )
 
 type Message struct {
@@ -33,7 +33,7 @@ func main() {
 		params.Set("fileName", *fileName)
 		params.Set("fileHash", *fileHash)
 		params.Set("filePeer", *destination)
-		res, err := http.PostForm( baseUrl + "/download", params)
+		res, err := http.PostForm(baseUrl+"/download", params)
 		if err != nil {
 			fmt.Println("Unable to send request")
 			return
@@ -44,8 +44,9 @@ func main() {
 			data, _ := ioutil.ReadAll(res.Body)
 			ioutil.WriteFile(*fileName, data, 0644)
 		case http.StatusNotFound:
-			fmt.Println("404 File not found")
-			fmt.Println(ioutil.ReadAll(res.Body))
+			fmt.Println("File not found")
+			response, _ := ioutil.ReadAll(res.Body)
+			fmt.Println(string(response))
 		default:
 			fmt.Println("Request error")
 		}
@@ -76,7 +77,7 @@ func main() {
 		part.Write(data)
 		writer.Close()
 
-		request, _ := http.NewRequest("POST", baseUrl + "/upload", &buffer)
+		request, _ := http.NewRequest("POST", baseUrl+"/upload", &buffer)
 		request.Header.Add("Content-Type", writer.FormDataContentType())
 		client := &http.Client{}
 		response, err := client.Do(request)
@@ -90,7 +91,7 @@ func main() {
 	} else if *destination == "" {
 		// Regular gossip message
 		data, _ := json.Marshal(*message)
-		rs, err := http.Post(baseUrl + "/message", "text/json", bytes.NewBuffer(data))
+		rs, err := http.Post(baseUrl+"/message", "text/json", bytes.NewBuffer(data))
 		if err != nil || rs.StatusCode != http.StatusOK {
 			fmt.Println("Unable to send the gossip message")
 		}
@@ -104,7 +105,7 @@ func main() {
 
 		msg := OutgoingMessage{*destination, *message}
 		data, _ := json.Marshal(msg)
-		rs, err := http.Post(baseUrl + "/privateMessage", "text/json", bytes.NewBuffer(data))
+		rs, err := http.Post(baseUrl+"/privateMessage", "text/json", bytes.NewBuffer(data))
 		if err != nil || rs.StatusCode != http.StatusOK {
 			fmt.Println("Unable to send the private message")
 		}

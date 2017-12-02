@@ -31,7 +31,7 @@ type contextType struct {
 	ChunkDatabase	  map[string][]byte // Hash -> 8 KB chunk
 
 	StatusSubscriptions   map[string]func(statusMessage *StatusPacket)
-	DownloadSubscriptions map[string]func(statusMessage *StatusPacket)
+	DownloadSubscriptions map[string]func([]byte) // Hash -> functor
 }
 
 type MessageLogEntry struct {
@@ -206,6 +206,29 @@ func (c *contextType) ForwardPrivateMessage(sender string, msg *PrivateMessage) 
 func (c *contextType) ForwardDataRequest(msg *DataRequest) {
 	if msg.Destination == c.ThisNodeName {
 		// The request has reached its destination
+
+		if msg.FileName != "" {
+			// This is a metafile request
+			file := c.GetFileByNameAndHash(msg.FileName, msg.HashValue)
+			if file != nil {
+				// File found -> send metafile to requester
+				reply := &DataReply{c.ThisNodeName, msg.Origin, 10, msg.FileName, msg.HashValue, file.MetaFile}
+				c.ForwardDataReply(reply)
+			} else {
+				// File not found -> send special message with empty metafile
+				reply := &DataReply{c.ThisNodeName, msg.Origin, 10, msg.FileName, msg.HashValue, make([]byte, 0)}
+				c.ForwardDataReply(reply)
+			}
+		} else {
+			// This is a chunk request
+			chunkData, found := c.ChunkDatabase[string(msg.HashValue)]
+			if found {
+				reply := &DataReply{c.ThisNodeName, msg.Origin, 10, "", msg.HashValue, chunkData}
+				c.ForwardDataReply(reply)
+			}
+			// Else: drop the message silently
+		}
+
 	} else {
 		if Context.NoForward {
 			return
@@ -228,6 +251,14 @@ func (c *contextType) ForwardDataRequest(msg *DataRequest) {
 func (c *contextType) ForwardDataReply(msg *DataReply) {
 	if msg.Destination == c.ThisNodeName {
 		// The reply has reached its destination
+		// Try to see if some task has requested a chunk/metafile with the given hash
+		callback, found := c.DownloadSubscriptions[string(msg.HashValue)]
+		if found {
+			// Forward the data to the requester
+			callback(msg.Data)
+		}
+		// Else: do nothing (i.e. drop the message)
+
 	} else {
 		if Context.NoForward {
 			return
@@ -356,33 +387,193 @@ func (c *contextType) BroadcastRoutes() {
 	}
 }
 
-func (c *contextType) AddFile(name string, content []byte) {
+func (c *contextType) AddFile(name string, content []byte) *SharedFile {
 	SaveFile(name, content)
 	metadata := BuildMetadata(name, content)
 	c.SharedFiles = append(c.SharedFiles, metadata)
+
+	// Add chunks to lookup database
+	numChunks := len(metadata.MetaFile)/32
+	for i := 0; i < numChunks; i++ {
+		chunkHash := metadata.MetaFile[i * 32 : (i+1)*32]
+		start := i * CHUNK_SIZE     // Inclusive
+		end := (i + 1) * CHUNK_SIZE // Exclusive
+		if end > len(content) {
+			end = len(content)
+		}
+		c.ChunkDatabase[string(chunkHash)] = content[start:end]
+	}
+
+	return metadata
 }
 
-func (c *contextType) FindOrRetrieveFile(fromPeer string, fileName string, fileHash []byte, callback func(*SharedFile, error)) {
-	// Check if the file already exists in the local database. If yes, return it.
+func (c *contextType) GetFileByNameAndHash(fileName string, fileHash []byte) *SharedFile {
 	for _, file := range c.SharedFiles {
 		if file.FileName == fileName && reflect.DeepEqual(file.MetaHash, fileHash) {
 			// Found it!
-			callback(file, nil)
-			return
+			return file
 		}
 	}
+	return nil
+}
 
-	// File not found in local database -> download it from the given peer
-	_, found := c.RoutingTable[fromPeer]
-	if !found {
-		callback(nil, errors.New("The given peer does not exist"))
+func (c *contextType) FindOrRetrieveFile(fromPeer string, fileName string, fileHash []byte, callback func(*SharedFile, error)) {
+	// Check if the file already exists in the local database. If this is the case, return it.
+	if file := c.GetFileByNameAndHash(fileName, fileHash); file != nil {
+		callback(file, nil)
 		return
 	}
 
-	req := &DataRequest{c.ThisNodeName, fromPeer, 10, fileName, fileHash}
-	c.ForwardDataRequest(req)
+	// File not found in local database -> download it from the given node
+	if fromPeer != c.ThisNodeName {
+		_, found := c.RoutingTable[fromPeer]
+		if !found {
+			callback(nil, errors.New("The given node does not exist"))
+			return
+		}
+	} else {
+		// Borderline case: the user has requested to download a file from THIS node, but the file does not exist
+		callback(nil, errors.New("File not found in local database"))
+		return
+	}
 
+	fmt.Printf("DOWNLOADING metafile of %s from %s\n", fileName, fromPeer)
 
+	// Subscribe for replies having the given hash
+	metaFile := make(chan []byte)
+	c.DownloadSubscriptions[string(fileHash)] = func(data []byte) {
+		metaFile <- data
+	}
 
-	callback(nil, errors.New("File not found (neither in the local database nor in the given peer)"))
+	// Run async task to wait for the metafile (or, upon timeout, resend the request)
+	go func() {
+		metaFileReceived := false
+		retryCount := 0
+		for !metaFileReceived {
+			c.RunSync(func() {
+				req := &DataRequest{c.ThisNodeName, fromPeer, 10, fileName, fileHash}
+				c.ForwardDataRequest(req)
+			})
+			timeoutTimer := time.After(5 * time.Second)
+			var result []byte
+			select { // Whichever comes first (timeout or metafile)...
+			case meta := <-metaFile:
+				metaFileReceived = true
+				result = meta
+			case <-timeoutTimer:
+					// Maybe we will have better luck at the next iteration
+					retryCount++
+			}
+			if metaFileReceived {
+				c.RunSync(func() {
+					// Unsubscribe
+					delete(c.DownloadSubscriptions, string(fileHash))
+				})
+				// An empty metafile means that the other side does not have the file
+				if len(result) > 0 {
+					c.DownloadFileFromPeer(fromPeer, fileName, result, func(fullFile *SharedFile) {
+						if fullFile != nil {
+							callback(fullFile, nil)
+						} else {
+							callback(nil, errors.New(
+								"Connection with the destination lost (timed out after 10 retries)"))
+						}
+					});
+				} else {
+					// The node does not have the file (signaled through a nil data field)
+					callback(nil, errors.New("The destination node does not have the file"))
+					return
+				}
+			} else if retryCount == 3 {
+				c.RunSync(func() {
+					// Unsubscribe
+					delete(c.DownloadSubscriptions, string(fileHash))
+				})
+				callback(nil, errors.New("The destination node does not answer (timed out after 3 retries)"))
+				return
+			}
+		}
+	}()
+}
+
+func (c* contextType) DownloadFileFromPeer(fromPeer string, fileName string, metaFile []byte, onCompletion func(*SharedFile)) {
+	go func() {
+		numChunks := len(metaFile) / 32
+		reconstructedFile := make([]byte, 0)
+		for i := 0; i < numChunks; i++ {
+			fmt.Printf("DOWNLOADING %s chunk %d from %s\n", fileName, i + 1, fromPeer)
+			chunkHash := metaFile[i*32 : (i+1)*32]
+
+			chunkData := make(chan []byte)
+			c.RunSync(func() {
+				c.DownloadSubscriptions[string(chunkHash)] = func(data []byte) {
+					chunkData <- data
+				}
+			})
+
+			obtained := false
+			// We keep a retry count, so that we stop the request if the destination does not answer within 10 retries
+			retryCount := 0
+			for !obtained {
+				c.RunSync(func() {
+					// Request next chunk
+					request := &DataRequest{c.ThisNodeName, fromPeer, 10, "", chunkHash}
+					c.ForwardDataRequest(request)
+				})
+				timeoutTimer := time.After(1 * time.Second) // Retransmit timeout
+				select { // Whichever comes first (timeout or metafile)...
+				case result := <-chunkData:
+					retryCount = 0 // Data received -> reset the retry count
+					reconstructedFile = append(reconstructedFile, result...)
+					c.RunSync(func() {
+						c.ChunkDatabase[string(chunkHash)] = result
+					})
+					obtained = true
+				case <-timeoutTimer:
+					retryCount++
+					if retryCount == 10 {
+						c.RunSync(func() {
+							// Unsubscribe
+							delete(c.DownloadSubscriptions, string(chunkHash))
+						})
+						onCompletion(nil)
+						return
+					}
+					// Retransmit the request at the next iteration
+
+				}
+			}
+
+			c.RunSync(func() {
+				// Unsubscribe
+				delete(c.DownloadSubscriptions, string(chunkHash))
+			})
+		}
+
+		fmt.Printf("RECONSTRUCTED file %s\n", fileName)
+		c.RunSync(func() {
+			filePtr := c.AddFile(fileName, reconstructedFile)
+			onCompletion(filePtr) // Finally, forward the full file to whomever requested it (e.g. web server)
+		})
+	}()
+}
+
+// RunSync runs a synchronous task on the main event loop, and waits until the task has finished
+func (c* contextType) RunSync(event func()) {
+	proceed := make(chan bool)
+	c.EventQueue <- func() {
+		event()
+		proceed <- true
+	}
+	<- proceed
+}
+
+// InitializeFileDatabase must be called when the application starts up. It fetches the download directory
+// and adds all files to the local database.
+func (c *contextType) InitializeFileDatabase() {
+	files := ListFiles()
+	for _, fileName := range files {
+		content, _ := LoadFile(fileName)
+		c.AddFile(fileName, content)
+	}
 }
