@@ -43,6 +43,7 @@ func main() {
 		case http.StatusOK:
 			data, _ := ioutil.ReadAll(res.Body)
 			ioutil.WriteFile(*fileName, data, 0644)
+			fmt.Println("File downloaded correctly")
 		case http.StatusNotFound:
 			fmt.Println("File not found")
 			response, _ := ioutil.ReadAll(res.Body)
@@ -87,6 +88,8 @@ func main() {
 		if response.StatusCode == http.StatusBadRequest {
 			fmt.Println("Unable to upload the file (400 Bad Request)")
 		}
+		body, _ := ioutil.ReadAll(response.Body)
+		fmt.Println(string(body))
 
 	} else if *destination == "" {
 		// Regular gossip message

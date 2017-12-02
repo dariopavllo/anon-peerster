@@ -226,12 +226,14 @@ func handleFileUpload(w http.ResponseWriter, r *http.Request) {
 		var buffer bytes.Buffer
 		io.Copy(&buffer, file)
 
-		Context.AddFile(header.Filename, buffer.Bytes())
+		result := Context.AddFile(header.Filename, buffer.Bytes())
 
 		// File correctly received
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("File uploaded correctly"))
-
+		w.Write([]byte("File uploaded correctly\n"))
+		w.Write([]byte("File name: " + result.FileName + "\n"))
+		w.Write([]byte("File size (bytes): " + fmt.Sprint(result.FileSize) + "\n"))
+		w.Write([]byte("MetaHash: " + hex.EncodeToString(result.MetaHash) + "\n"))
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		w.Write([]byte("Malformed request"))

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
+	"reflect"
 )
 
 type SharedFile struct {
@@ -36,6 +37,29 @@ func BuildMetadata(name string, content []byte) *SharedFile {
 	totalHash := sha256.Sum256(chunkHashes)
 	fmt.Printf("Hash for %s: %s\n", name, hex.EncodeToString(totalHash[:]))
 	return &SharedFile{name, len(content), chunkHashes, totalHash[:]}
+}
+
+// VerifyMetafile verifies whether a received metaFile is valid
+func VerifyMetafile(metaHash []byte, metaFile []byte) bool {
+	if len(metaFile) == 0 {
+		// An empty metafile is ok: it means that the sender does not have the requested file
+		return true
+	}
+	// First check: the length of the metaFile must be a multiple of 32 (SHA-256 size in bytes)
+	if len(metaFile) % sha256.Size != 0 {
+		return false
+	}
+
+	// Second check: verify the hash
+	actual := sha256.Sum256(metaFile)
+	return reflect.DeepEqual(metaHash, actual[:])
+}
+
+// VerifyMetafile verifies whether received chunk is valid
+func VerifyChunk(chunkIndex int, metaFile []byte, receivedData []byte) bool {
+	expected := metaFile[chunkIndex * sha256.Size : (chunkIndex + 1) * sha256.Size]
+	actual := sha256.Sum256(receivedData)
+	return reflect.DeepEqual(expected, actual[:])
 }
 
 func SaveFile(name string, content []byte) {

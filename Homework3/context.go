@@ -442,7 +442,10 @@ func (c *contextType) FindOrRetrieveFile(fromPeer string, fileName string, fileH
 	// Subscribe for replies having the given hash
 	metaFile := make(chan []byte)
 	c.DownloadSubscriptions[string(fileHash)] = func(data []byte) {
-		metaFile <- data
+		// Check the metafile for correctness (correct size + hash verification), otherwise drop it
+		if VerifyMetafile(fileHash, data) {
+			metaFile <- data
+		}
 	}
 
 	// Run async task to wait for the metafile (or, upon timeout, resend the request)
@@ -507,7 +510,10 @@ func (c* contextType) DownloadFileFromPeer(fromPeer string, fileName string, met
 			chunkData := make(chan []byte)
 			c.RunSync(func() {
 				c.DownloadSubscriptions[string(chunkHash)] = func(data []byte) {
-					chunkData <- data
+					// Verify the hash of the chunk. If it not valid, drop the message.
+					if VerifyChunk(i, metaFile, data) {
+						chunkData <- data
+					}
 				}
 			})
 
