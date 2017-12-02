@@ -1,8 +1,11 @@
 package main
 
 import (
+	"bytes"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"net/http"
 )
@@ -15,6 +18,8 @@ func InitializeWebServer(port int) {
 	r.HandleFunc("/id", handle(handleId))
 	r.HandleFunc("/routes", handle(handleRoutes))
 	r.HandleFunc("/privateMessage", handle(handlePrivateMessages))
+	r.HandleFunc("/upload", handle(handleFileUpload))
+	r.HandleFunc("/download", handleFileDownload)
 	r.Handle("/", http.FileServer(http.Dir("webclient")))
 	go http.ListenAndServe(":"+fmt.Sprint(port), r)
 }
@@ -96,7 +101,7 @@ func handleNodes(w http.ResponseWriter, r *http.Request) {
 
 		type PeerStruct struct {
 			Address string
-			Type int
+			Type    int
 		}
 
 		peerList := make([]PeerStruct, 0)
@@ -206,5 +211,71 @@ func handlePrivateMessages(w http.ResponseWriter, r *http.Request) {
 
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+func handleFileUpload(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case "POST":
+		file, header, err := r.FormFile("uploadedFile")
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			w.Write([]byte("Malformed request"))
+			return
+		}
+		defer file.Close()
+		fmt.Printf("FILE UPLOAD %s size %d\n", header.Filename, header.Size)
+
+		var buffer bytes.Buffer
+		io.Copy(&buffer, file)
+
+		Context.AddFile(header.Filename, buffer.Bytes())
+
+		// File correctly received
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("File uploaded correctly"))
+
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		w.Write([]byte("Malformed request"))
+	}
+}
+
+func handleFileDownload(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case "POST":
+		fileName := r.PostFormValue("fileName")
+		fileHashStr := r.PostFormValue("fileHash")
+		filePeer := r.PostFormValue("filePeer")
+		fileHash, err := hex.DecodeString(fileHashStr)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			w.Write([]byte("Invalid file hash"))
+			return
+		}
+
+		done := make(chan bool)
+		var result *SharedFile
+		var resultError error
+		Context.EventQueue <- func() {
+			Context.FindOrRetrieveFile(filePeer, fileName, fileHash, func(res *SharedFile, err error) {
+				result = res
+				resultError = err
+				done <- true
+			})
+		}
+		<-done
+
+		if resultError != nil {
+			w.WriteHeader(http.StatusNotFound)
+			w.Write([]byte(resultError.Error()))
+			return
+		}
+
+		http.ServeFile(w, r, "files/"+Context.ThisNodeName+"/"+fileName)
+
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		w.Write([]byte("Malformed request"))
 	}
 }

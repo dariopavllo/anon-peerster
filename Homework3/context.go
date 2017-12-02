@@ -2,32 +2,36 @@ package main
 
 import (
 	"errors"
-	"math/rand"
-	"time"
 	"fmt"
+	"math/rand"
+	"reflect"
+	"time"
 )
 
 // Classes for peers
 const (
-	Manual = 0
-	Learned = 1
+	Manual         = 0
+	Learned        = 1
 	ShortCircuited = 2
 )
 
 type contextType struct {
-	EventQueue      	chan func()
-	GossipSocket    	Socket
-	PeerSet         	map[string]int // The integer value represents the class
-	Messages        	map[string][]GossipMessageEntry
-	ThisNodeName    	string
-	ThisNodeAddress 	string
-	MessageLog      	[]MessageLogEntry
-	PrivateMessageLog   map[string][]MessageLogEntry
-	RoutingTable    	map[string]string
-	NoForward			bool
-	DisableTraversal	bool
+	EventQueue        chan func()
+	GossipSocket      Socket
+	PeerSet           map[string]int // The integer value represents the class
+	Messages          map[string][]GossipMessageEntry
+	ThisNodeName      string
+	ThisNodeAddress   string
+	MessageLog        []MessageLogEntry
+	PrivateMessageLog map[string][]MessageLogEntry
+	RoutingTable      map[string]string
+	NoForward         bool
+	DisableTraversal  bool
+	SharedFiles       []*SharedFile
+	ChunkDatabase	  map[string][]byte // Hash -> 8 KB chunk
 
-	StatusSubscriptions map[string]func(statusMessage *StatusPacket)
+	StatusSubscriptions   map[string]func(statusMessage *StatusPacket)
+	DownloadSubscriptions map[string]func(statusMessage *StatusPacket)
 }
 
 type MessageLogEntry struct {
@@ -40,7 +44,7 @@ type MessageLogEntry struct {
 
 type GossipMessageEntry struct {
 	LastSender string
-	Text string
+	Text       string
 }
 
 var Context contextType
@@ -101,7 +105,7 @@ func (c *contextType) TryInsertMessage(origin string, originAddress string, mess
 			fmt.Printf("DSDV %s: %s\n", origin, originAddress)
 
 			return true, nil
-		} else if id == expectedNextID - 1 {
+		} else if id == expectedNextID-1 {
 			// Already seen (last message)
 			if !c.DisableTraversal && previousAddress == "" {
 				// Direct route message -> override route
@@ -197,6 +201,50 @@ func (c *contextType) ForwardPrivateMessage(sender string, msg *PrivateMessage) 
 		}
 	}
 	// In all other cases (hop limit reached, no route found), the message is discarded
+}
+
+func (c *contextType) ForwardDataRequest(msg *DataRequest) {
+	if msg.Destination == c.ThisNodeName {
+		// The request has reached its destination
+	} else {
+		if Context.NoForward {
+			return
+		}
+
+		if msg.HopLimit > 0 {
+			msg.HopLimit--
+
+			// Find next hop
+			next, found := c.RoutingTable[msg.Destination]
+			if found {
+				outMsg := GossipPacket{DataReq: msg}
+				Context.GossipSocket.Send(Encode(&outMsg), next)
+			}
+		}
+	}
+	// In all other cases (hop limit reached, no route found), the packet is discarded
+}
+
+func (c *contextType) ForwardDataReply(msg *DataReply) {
+	if msg.Destination == c.ThisNodeName {
+		// The reply has reached its destination
+	} else {
+		if Context.NoForward {
+			return
+		}
+
+		if msg.HopLimit > 0 {
+			msg.HopLimit--
+
+			// Find next hop
+			next, found := c.RoutingTable[msg.Destination]
+			if found {
+				outMsg := GossipPacket{DataRep: msg}
+				Context.GossipSocket.Send(Encode(&outMsg), next)
+			}
+		}
+	}
+	// In all other cases (hop limit reached, no route found), the packet is discarded
 }
 
 func (c *contextType) LogPrivateMessage(sender string, msg *PrivateMessage) {
@@ -306,4 +354,35 @@ func (c *contextType) BroadcastRoutes() {
 		outMsg := GossipPacket{Rumor: rumor}
 		c.GossipSocket.Send(Encode(&outMsg), peerAddress)
 	}
+}
+
+func (c *contextType) AddFile(name string, content []byte) {
+	SaveFile(name, content)
+	metadata := BuildMetadata(name, content)
+	c.SharedFiles = append(c.SharedFiles, metadata)
+}
+
+func (c *contextType) FindOrRetrieveFile(fromPeer string, fileName string, fileHash []byte, callback func(*SharedFile, error)) {
+	// Check if the file already exists in the local database. If yes, return it.
+	for _, file := range c.SharedFiles {
+		if file.FileName == fileName && reflect.DeepEqual(file.MetaHash, fileHash) {
+			// Found it!
+			callback(file, nil)
+			return
+		}
+	}
+
+	// File not found in local database -> download it from the given peer
+	_, found := c.RoutingTable[fromPeer]
+	if !found {
+		callback(nil, errors.New("The given peer does not exist"))
+		return
+	}
+
+	req := &DataRequest{c.ThisNodeName, fromPeer, 10, fileName, fileHash}
+	c.ForwardDataRequest(req)
+
+
+
+	callback(nil, errors.New("File not found (neither in the local database nor in the given peer)"))
 }

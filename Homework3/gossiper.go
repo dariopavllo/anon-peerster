@@ -16,12 +16,12 @@ func main() {
 	peersParams := flag.String("peers", "", "peers separated by commas")
 	rTimer := flag.Int("rtimer", 60, "seconds between route rumor messages")
 	noForward := flag.Bool("noforward", false, "disable forwarding of rumor messages")
-	disableTraversal := flag.Bool("disableTraversal", false, "disable NAT traversal")
+	disableTraversal := flag.Bool("disableTraversal", true, "disable NAT traversal (default true)")
 
 	flag.Parse()
 
 	if *gossipIpPort == "" {
-		FailOnError(errors.New("you must supply a gossip address/port (gossipAddr). Use \":PORT\" to listen to all interfaces."))
+		FailOnError(errors.New("you must supply a gossip address/port (gossipAddr). Use \":PORT\" to listen to all interfaces"))
 	}
 	Context.ThisNodeAddress = *gossipIpPort
 
@@ -143,6 +143,14 @@ func main() {
 
 		if msg.Private != nil {
 			Context.ForwardPrivateMessage(sender, msg.Private)
+		}
+
+		if msg.DataReq != nil {
+			Context.ForwardDataRequest(sender, msg.DataReq)
+		}
+
+		if msg.DataRep != nil {
+			Context.ForwardDataReply(sender, msg.DataRep)
 		}
 	}
 	// Start listening for peer messages in another thread
