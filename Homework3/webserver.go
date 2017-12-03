@@ -8,6 +8,8 @@ import (
 	"io"
 	"io/ioutil"
 	"net/http"
+	"strconv"
+	"strings"
 )
 
 // InitializeWebServer spawns an HTTP request handler on another thread.
@@ -19,7 +21,8 @@ func InitializeWebServer(port int) {
 	r.HandleFunc("/routes", handle(handleRoutes))
 	r.HandleFunc("/privateMessage", handle(handlePrivateMessages))
 	r.HandleFunc("/upload", handle(handleFileUpload))
-	r.HandleFunc("/download", handleFileDownload)
+	r.HandleFunc("/download", handleFileDownload) // Asynchronous
+	r.HandleFunc("/search", handleFileSearch)     // Asynchronous
 	r.Handle("/", http.FileServer(http.Dir("webclient")))
 	go http.ListenAndServe(":"+fmt.Sprint(port), r)
 }
@@ -273,6 +276,45 @@ func handleFileDownload(w http.ResponseWriter, r *http.Request) {
 		}
 
 		http.ServeFile(w, r, DOWNLOAD_DIR+"/"+Context.ThisNodeName+"/"+fileName)
+
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		w.Write([]byte("Malformed request"))
+	}
+}
+
+func handleFileSearch(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case "POST":
+		type Search struct {
+			Keywords string
+			Budget   string
+		}
+
+		var keywordsRaw Search
+		err := safeDecode(w, r, &keywordsRaw)
+		if err == nil {
+
+			keywords := strings.Split(keywordsRaw.Keywords, ",")
+			i64, err := strconv.ParseInt(keywordsRaw.Budget, 10, 32)
+			if err != nil {
+				i64 = 0 // 0 = auto
+			}
+			if i64 > 32 {
+				i64 = 32 // Max budget = 32
+			}
+
+			results := make(chan string)
+			Context.SearchFiles(keywords, int(i64), results)
+			w.WriteHeader(http.StatusOK)
+
+			// Print results in real-time as soon as data is pushed into the channel
+			for match := range results {
+				w.Write([]byte(match))
+				w.Write([]byte("\n"))
+				w.(http.Flusher).Flush()
+			}
+		}
 
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)

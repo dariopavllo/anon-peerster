@@ -9,6 +9,45 @@ import (
 	"reflect"
 )
 
+// FileDescriptor represents a file record, which has not necessarily been fully downloaded
+type FileDescriptor struct {
+	FileName string
+	MetaFile []byte
+	ChunkMap [][]string // Maps each Chunk ID to a list of possible nodes from where it could be downloaded
+}
+
+// HasChunk returns true if at least one node has the requested chunk
+func (f *FileDescriptor) HasChunk(chunkID int) bool {
+	if chunkID < len(f.ChunkMap) {
+		return len(f.ChunkMap[chunkID]) > 0
+	}
+	return false
+}
+
+// HasChunk returns true if all chunks can be found in at least one node, meaning that the file can be downloaded
+func (f *FileDescriptor) HasAllChunks() bool {
+	for i := range f.ChunkMap {
+		if !f.HasChunk(i) {
+			return false
+		}
+	}
+	return true
+}
+
+// AddChunk is used for signaling that a given node has a certain chunk
+func (f *FileDescriptor) AddChunk(chunkID int, node string) {
+	if chunkID < len(f.ChunkMap) {
+		for _, o := range f.ChunkMap[chunkID] {
+			if o == node {
+				return
+			}
+		}
+		// Not found -> add it
+		f.ChunkMap[chunkID] = append(f.ChunkMap[chunkID], node)
+	}
+}
+
+// SharedFile represents a file that has been fully downloaded, and for which all information is available
 type SharedFile struct {
 	FileName string
 	FileSize int
@@ -46,7 +85,7 @@ func VerifyMetafile(metaHash []byte, metaFile []byte) bool {
 		return true
 	}
 	// First check: the length of the metaFile must be a multiple of 32 (SHA-256 size in bytes)
-	if len(metaFile) % sha256.Size != 0 {
+	if len(metaFile)%sha256.Size != 0 {
 		return false
 	}
 
@@ -57,7 +96,7 @@ func VerifyMetafile(metaHash []byte, metaFile []byte) bool {
 
 // VerifyMetafile verifies whether received chunk is valid
 func VerifyChunk(chunkIndex int, metaFile []byte, receivedData []byte) bool {
-	expected := metaFile[chunkIndex * sha256.Size : (chunkIndex + 1) * sha256.Size]
+	expected := metaFile[chunkIndex*sha256.Size : (chunkIndex+1)*sha256.Size]
 	actual := sha256.Sum256(receivedData)
 	return reflect.DeepEqual(expected, actual[:])
 }

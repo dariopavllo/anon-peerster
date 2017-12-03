@@ -42,6 +42,25 @@ type DataReply struct {
 	Data        []byte
 }
 
+type SearchRequest struct {
+	Origin   string
+	Budget   uint64
+	Keywords []string
+}
+
+type SearchReply struct {
+	Origin      string
+	Destination string
+	HopLimit    uint32
+	Results     []*SearchResult
+}
+
+type SearchResult struct {
+	FileName     string
+	MetafileHash []byte
+	ChunkMap     []uint64
+}
+
 type PeerStatus struct {
 	Identifier string
 	NextID     uint32
@@ -52,11 +71,13 @@ type StatusPacket struct {
 }
 
 type GossipPacket struct {
-	Rumor   *RumorMessage
-	Status  *StatusPacket
-	Private *PrivateMessage
-	DataReq *DataRequest
-	DataRep *DataReply
+	Rumor     *RumorMessage
+	Status    *StatusPacket
+	Private   *PrivateMessage
+	DataReq   *DataRequest
+	DataRep   *DataReply
+	SearchReq *SearchRequest
+	SearchRep *SearchReply
 }
 
 func Decode(data []byte, message interface{}) error {

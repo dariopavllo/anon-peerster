@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strings"
 )
 
 // FailOnError prints the error and terminates the program, if a non-nil error is given.
@@ -72,4 +73,12 @@ func SplitAddress(address string) (*net.IP, *int) {
 	}
 	addr, _ := net.ResolveUDPAddr("udp", address)
 	return &addr.IP, &addr.Port
+}
+
+func JoinIntList(list []uint64) string {
+	strList := make([]string, len(list))
+	for i, val := range list {
+		strList[i] = fmt.Sprint(val)
+	}
+	return strings.Join(strList, ",")
 }

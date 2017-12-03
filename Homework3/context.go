@@ -1,10 +1,12 @@
 package main
 
 import (
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"math/rand"
 	"reflect"
+	"strings"
 	"time"
 )
 
@@ -27,8 +29,12 @@ type contextType struct {
 	RoutingTable      map[string]string
 	NoForward         bool
 	DisableTraversal  bool
-	SharedFiles       []*SharedFile
-	ChunkDatabase	  map[string][]byte // Hash -> 8 KB chunk
+
+	SharedFiles      []*SharedFile
+	MetafileDatabase map[string]*FileDescriptor // Metahash -> (metafile, filename)
+	ChunkDatabase    map[string][]byte         // Chunk hash -> 8 KB chunk
+	PendingRequests  []*SearchRequest
+	SearchResults    []*SearchReply // Search results for the last query
 
 	StatusSubscriptions   map[string]func(statusMessage *StatusPacket)
 	DownloadSubscriptions map[string]func([]byte) // Hash -> functor
@@ -278,6 +284,120 @@ func (c *contextType) ForwardDataReply(msg *DataReply) {
 	// In all other cases (hop limit reached, no route found), the packet is discarded
 }
 
+func (c *contextType) ForwardSearchRequest(sender string, msg *SearchRequest) {
+	if msg.Budget == 0 {
+		return
+	}
+
+	// Check if this request is a duplicate within 0.5 seconds -> if so, drop it
+	for _, req := range c.PendingRequests {
+		if req.Origin == msg.Origin && reflect.DeepEqual(req.Keywords, msg.Keywords) {
+			return
+		}
+	}
+
+	// The request is not a duplicate -> add it to the list and start an async job for destroying it after 0.5 seconds
+	c.PendingRequests = append(c.PendingRequests, msg)
+	time.AfterFunc(time.Millisecond*500, func() {
+		Context.EventQueue <- func() {
+			for i, req := range c.PendingRequests {
+				if req.Origin == msg.Origin && reflect.DeepEqual(req.Keywords, msg.Keywords) {
+					c.PendingRequests[i] = c.PendingRequests[len(c.PendingRequests)-1]
+					c.PendingRequests = c.PendingRequests[:len(c.PendingRequests)-1]
+					return
+				}
+			}
+		}
+	})
+
+	if msg.Origin != c.ThisNodeName {
+		// Local search
+		searchResults := make([]*SearchResult, 0)
+		for metaHash, file := range c.MetafileDatabase {
+			for _, keyword := range msg.Keywords {
+				if strings.Contains(file.FileName, keyword) {
+					record := &SearchResult{file.FileName, []byte(metaHash), make([]uint64, 0)}
+
+					// Enumerate the chunks available so far at this node
+					numChunks := len(file.MetaFile) / 32
+					for i := 0; i < numChunks; i++ {
+						chunkHash := file.MetaFile[i*32 : (i+1)*32]
+						if _, found := c.ChunkDatabase[string(chunkHash)]; found {
+							record.ChunkMap = append(record.ChunkMap, uint64(i+1)) // 1-based chunk index
+						}
+					}
+					searchResults = append(searchResults, record)
+					break // Break the outer loop, so that we do not risk adding the same file twice
+				}
+			}
+		}
+
+		if len(searchResults) > 0 {
+			// Some matches have been found -> send reply
+			reply := &SearchReply{c.ThisNodeName, msg.Origin, 10, searchResults}
+			c.ForwardSearchReply(reply)
+		}
+
+		msg.Budget--
+	}
+
+	// Do not forward the request if the budget has reached zero
+	if msg.Budget == 0 {
+		return
+	}
+
+	// Repartition the remaining budget among peers (excluding the last sender)
+	nextPeers := make([]string, 0)
+	for peer := range c.PeerSet {
+		if peer != sender {
+			nextPeers = append(nextPeers, peer)
+		}
+	}
+	permutationList := rand.Perm(len(nextPeers))
+	budgetAllocation := make([]int, len(nextPeers))
+	i := 0
+	for len(nextPeers) > 0 && msg.Budget > 0 {
+		budgetAllocation[permutationList[i]]++
+		msg.Budget--
+		i = (i + 1) % len(nextPeers)
+	}
+
+	// Forward the request to the "lucky" peers
+	for index, peer := range nextPeers {
+		if budgetAllocation[index] > 0 {
+			msg.Budget = uint64(budgetAllocation[index])
+			outMsg := GossipPacket{SearchReq: msg}
+			Context.GossipSocket.Send(Encode(&outMsg), peer)
+		}
+	}
+}
+
+func (c *contextType) ForwardSearchReply(msg *SearchReply) {
+	if msg.Destination == c.ThisNodeName {
+		// The reply has reached its destination
+
+		// Add reply to search result list
+		c.SearchResults = append(c.SearchResults, msg)
+
+	} else {
+		if Context.NoForward {
+			return
+		}
+
+		if msg.HopLimit > 0 {
+			msg.HopLimit--
+
+			// Find next hop
+			next, found := c.RoutingTable[msg.Destination]
+			if found {
+				outMsg := GossipPacket{SearchRep: msg}
+				Context.GossipSocket.Send(Encode(&outMsg), next)
+			}
+		}
+	}
+	// In all other cases (hop limit reached, no route found), the packet is discarded
+}
+
 func (c *contextType) LogPrivateMessage(sender string, msg *PrivateMessage) {
 	var targetName string
 	if msg.Origin == c.ThisNodeName {
@@ -391,11 +511,15 @@ func (c *contextType) AddFile(name string, content []byte) *SharedFile {
 	SaveFile(name, content)
 	metadata := BuildMetadata(name, content)
 	c.SharedFiles = append(c.SharedFiles, metadata)
+	if _, found := c.MetafileDatabase[string(metadata.MetaHash)]; !found {
+		c.MetafileDatabase[string(metadata.MetaHash)] = &FileDescriptor{metadata.FileName,
+		metadata.MetaFile, make([][]string, len(metadata.MetaFile)/32)}
+	}
 
 	// Add chunks to lookup database
-	numChunks := len(metadata.MetaFile)/32
+	numChunks := len(metadata.MetaFile) / 32
 	for i := 0; i < numChunks; i++ {
-		chunkHash := metadata.MetaFile[i * 32 : (i+1)*32]
+		chunkHash := metadata.MetaFile[i*32 : (i+1)*32]
 		start := i * CHUNK_SIZE     // Inclusive
 		end := (i + 1) * CHUNK_SIZE // Exclusive
 		if end > len(content) {
@@ -408,6 +532,7 @@ func (c *contextType) AddFile(name string, content []byte) *SharedFile {
 }
 
 func (c *contextType) GetFileByNameAndHash(fileName string, fileHash []byte) *SharedFile {
+	// Having the metafile is not enough, hence we iterate through the database
 	for _, file := range c.SharedFiles {
 		if file.FileName == fileName && reflect.DeepEqual(file.MetaHash, fileHash) {
 			// Found it!
@@ -417,18 +542,31 @@ func (c *contextType) GetFileByNameAndHash(fileName string, fileHash []byte) *Sh
 	return nil
 }
 
-func (c *contextType) FindOrRetrieveFile(fromPeer string, fileName string, fileHash []byte, callback func(*SharedFile, error)) {
+func (c *contextType) FindOrRetrieveFile(fromPeer string, fileName string, metaHash []byte, callback func(*SharedFile, error)) {
 	// Check if the file already exists in the local database. If this is the case, return it.
-	if file := c.GetFileByNameAndHash(fileName, fileHash); file != nil {
+	if file := c.GetFileByNameAndHash(fileName, metaHash); file != nil {
 		callback(file, nil)
 		return
+	}
+
+	if fromPeer == "" {
+		// General case: the client has not specified a destination node
+		if _, found := c.MetafileDatabase[string(metaHash)]; found {
+			if !c.MetafileDatabase[string(metaHash)].HasAllChunks() {
+				callback(nil, errors.New("The file has been searched but not all chunks are available"))
+				return
+			}
+		} else {
+			callback(nil, errors.New("File not found in download pool (consider searching it first)"))
+			return
+		}
 	}
 
 	// File not found in local database -> download it from the given node
 	if fromPeer != c.ThisNodeName {
 		_, found := c.RoutingTable[fromPeer]
-		if !found {
-			callback(nil, errors.New("The given node does not exist"))
+		if fromPeer != "" && !found {
+			callback(nil, errors.New("The given node does not exist in the routing table"))
 			return
 		}
 	} else {
@@ -437,13 +575,38 @@ func (c *contextType) FindOrRetrieveFile(fromPeer string, fileName string, fileH
 		return
 	}
 
-	fmt.Printf("DOWNLOADING metafile of %s from %s\n", fileName, fromPeer)
+	// Run async task
+	c.DownloadMetaFileFromNode(fromPeer, fileName, metaHash, func(metaFile []byte, err error) {
+		if err == nil {
+			c.DownloadFileFromNode(fromPeer, fileName, metaHash, metaFile, func(fullFile *SharedFile) {
+				if fullFile != nil {
+					callback(fullFile, nil)
+				} else {
+					callback(nil, errors.New(
+						"Connection with the destination lost (timed out after 10 retries)"))
+				}
+			})
+		} else {
+			callback(nil, err)
+		}
+	})
+}
 
+// DownloadMetaFileFromNode downloads the metafile from a node in an asynchronous way
+func (c *contextType) DownloadMetaFileFromNode(fromPeer string, fileName string, metaHash []byte, onCompletion func([]byte, error)) {
+
+	// First, check if the metafile has already been retrieved
+	if val, found := c.MetafileDatabase[string(metaHash)]; found {
+		onCompletion(val.MetaFile, nil)
+		return
+	}
+
+	fmt.Printf("DOWNLOADING metafile of %s from %s\n", fileName, fromPeer)
 	// Subscribe for replies having the given hash
 	metaFile := make(chan []byte)
-	c.DownloadSubscriptions[string(fileHash)] = func(data []byte) {
+	c.DownloadSubscriptions[string(metaHash)] = func(data []byte) {
 		// Check the metafile for correctness (correct size + hash verification), otherwise drop it
-		if VerifyMetafile(fileHash, data) {
+		if VerifyMetafile(metaHash, data) {
 			metaFile <- data
 		}
 	}
@@ -454,7 +617,7 @@ func (c *contextType) FindOrRetrieveFile(fromPeer string, fileName string, fileH
 		retryCount := 0
 		for !metaFileReceived {
 			c.RunSync(func() {
-				req := &DataRequest{c.ThisNodeName, fromPeer, 10, fileName, fileHash}
+				req := &DataRequest{c.ThisNodeName, fromPeer, 10, fileName, metaHash}
 				c.ForwardDataRequest(req)
 			})
 			timeoutTimer := time.After(5 * time.Second)
@@ -464,47 +627,51 @@ func (c *contextType) FindOrRetrieveFile(fromPeer string, fileName string, fileH
 				metaFileReceived = true
 				result = meta
 			case <-timeoutTimer:
-					// Maybe we will have better luck at the next iteration
-					retryCount++
+				// Maybe we will have better luck at the next iteration
+				retryCount++
 			}
 			if metaFileReceived {
 				c.RunSync(func() {
 					// Unsubscribe
-					delete(c.DownloadSubscriptions, string(fileHash))
+					delete(c.DownloadSubscriptions, string(metaHash))
+
+					// Add metafile to local database
+					if len(result) > 0 {
+						if _, found := c.MetafileDatabase[string(metaHash)]; !found {
+							c.MetafileDatabase[string(metaHash)] = &FileDescriptor{fileName,
+								result, make([][]string, len(result)/32)}
+						}
+					}
 				})
 				// An empty metafile means that the other side does not have the file
 				if len(result) > 0 {
-					c.DownloadFileFromPeer(fromPeer, fileName, result, func(fullFile *SharedFile) {
-						if fullFile != nil {
-							callback(fullFile, nil)
-						} else {
-							callback(nil, errors.New(
-								"Connection with the destination lost (timed out after 10 retries)"))
-						}
-					});
+					onCompletion(result, nil)
+					return
 				} else {
 					// The node does not have the file (signaled through a nil data field)
-					callback(nil, errors.New("The destination node does not have the file"))
+					onCompletion(nil, errors.New("The destination node does not have the file"))
 					return
 				}
 			} else if retryCount == 3 {
 				c.RunSync(func() {
 					// Unsubscribe
-					delete(c.DownloadSubscriptions, string(fileHash))
+					delete(c.DownloadSubscriptions, string(metaHash))
 				})
-				callback(nil, errors.New("The destination node does not answer (timed out after 3 retries)"))
+
+				onCompletion(nil, errors.New("The destination node does not answer (timed out after 3 retries)"))
 				return
 			}
 		}
 	}()
 }
 
-func (c* contextType) DownloadFileFromPeer(fromPeer string, fileName string, metaFile []byte, onCompletion func(*SharedFile)) {
+// If "fromPeer" is not empty, DownloadFileFromNode downloads a file from a SINGLE node, assuming that the metafile has already been retrieved.
+// Otherwise, it downloads it from a random number of nodes, assuming that the file has been searched first.
+func (c *contextType) DownloadFileFromNode(fromPeer string, fileName string, metaHash []byte, metaFile []byte, onCompletion func(*SharedFile)) {
 	go func() {
 		numChunks := len(metaFile) / 32
 		reconstructedFile := make([]byte, 0)
 		for i := 0; i < numChunks; i++ {
-			fmt.Printf("DOWNLOADING %s chunk %d from %s\n", fileName, i + 1, fromPeer)
 			chunkHash := metaFile[i*32 : (i+1)*32]
 
 			chunkData := make(chan []byte)
@@ -523,11 +690,18 @@ func (c* contextType) DownloadFileFromPeer(fromPeer string, fileName string, met
 			for !obtained {
 				c.RunSync(func() {
 					// Request next chunk
-					request := &DataRequest{c.ThisNodeName, fromPeer, 10, "", chunkHash}
+					targetPeer := fromPeer
+					if targetPeer == "" {
+						chunkMap := c.MetafileDatabase[string(metaHash)].ChunkMap[i]
+						targetPeer = chunkMap[rand.Intn(len(chunkMap))] // Select random peer
+					}
+
+					fmt.Printf("DOWNLOADING %s chunk %d from %s\n", fileName, i+1, targetPeer)
+					request := &DataRequest{c.ThisNodeName, targetPeer, 10, "", chunkHash}
 					c.ForwardDataRequest(request)
 				})
 				timeoutTimer := time.After(1 * time.Second) // Retransmit timeout
-				select { // Whichever comes first (timeout or metafile)...
+				select {                                    // Whichever comes first (timeout or metafile)...
 				case result := <-chunkData:
 					retryCount = 0 // Data received -> reset the retry count
 					reconstructedFile = append(reconstructedFile, result...)
@@ -565,13 +739,13 @@ func (c* contextType) DownloadFileFromPeer(fromPeer string, fileName string, met
 }
 
 // RunSync runs a synchronous task on the main event loop, and waits until the task has finished
-func (c* contextType) RunSync(event func()) {
+func (c *contextType) RunSync(event func()) {
 	proceed := make(chan bool)
 	c.EventQueue <- func() {
 		event()
 		proceed <- true
 	}
-	<- proceed
+	<-proceed
 }
 
 // InitializeFileDatabase must be called when the application starts up. It fetches the download directory
@@ -582,4 +756,113 @@ func (c *contextType) InitializeFileDatabase() {
 		content, _ := LoadFile(fileName)
 		c.AddFile(fileName, content)
 	}
+}
+
+func (c *contextType) SearchFiles(keywords []string, budget int, outResults chan string) {
+	// Run asynchronously
+	go func() {
+		expanding := false
+		if budget == 0 {
+			// Expanding scheme
+			budget = 2
+			expanding = true
+			outResults <- "Automatic budget expansion enabled (from 2 to 32)"
+		} else {
+			outResults <- "Using a fixed budget of " + fmt.Sprint(budget)
+		}
+
+		// MetaHashes seen so far
+		seenSet := make(map[string]bool)
+
+		for {
+
+			c.RunSync(func() {
+				c.SearchResults = nil // Reset search results
+				msg := &SearchRequest{c.ThisNodeName, uint64(budget), keywords}
+				c.ForwardSearchRequest(c.ThisNodeAddress, msg)
+			})
+
+			// Wait for 1 second until completion
+			time.Sleep(time.Second * 1)
+
+			// Collect the results
+			proceedCount := 0
+			proceed := make(chan bool)
+			c.RunSync(func() {
+				for _, result := range c.SearchResults {
+					for _, match := range result.Results {
+
+						line := fmt.Sprintf("FOUND match %s at %s budget=%d metafile=%s chunks=%s",
+							match.FileName, result.Origin, budget, hex.EncodeToString(match.MetafileHash), JoinIntList(match.ChunkMap))
+						outResults <- line
+
+						// For each result, check if we have the metafile, otherwise download it
+						_, found := c.MetafileDatabase[string(match.MetafileHash)]
+						if !found {
+							outResults <- fmt.Sprintf("DOWNLOADING metafile of %s from %s", match.FileName, result.Origin)
+							proceedCount++
+							c.DownloadMetaFileFromNode(result.Origin, match.FileName, match.MetafileHash, func([]byte, error) {
+								proceed <- true
+							})
+						}
+					}
+				}
+			})
+
+			// Wait until all metafiles have been downloaded asynchronously
+			for proceedCount > 0 {
+				<-proceed
+				proceedCount--
+			}
+
+			c.RunSync(func() {
+				for _, result := range c.SearchResults {
+					for _, match := range result.Results {
+						if _, found := c.MetafileDatabase[string(match.MetafileHash)]; !found {
+							continue
+						}
+
+						// Update chunk database
+						for _, chunkID := range match.ChunkMap {
+							c.MetafileDatabase[string(match.MetafileHash)].AddChunk(int(chunkID - 1), result.Origin)
+						}
+
+						seenSet[string(match.MetafileHash)] = true
+					}
+				}
+			})
+
+			resultCount := 0
+			c.RunSync(func() {
+				// Enumerate the actual whole matches (i.e. matches for which all chunks are available)
+				for metaHash := range seenSet {
+					if c.MetafileDatabase[metaHash].HasAllChunks() {
+						resultCount++
+						outResults <- "Downloadable match: " + c.MetafileDatabase[metaHash].FileName + ":" + hex.EncodeToString([]byte(metaHash))
+					}
+				}
+			})
+
+			if resultCount >= 2 {
+				// If we have at least 2 results, we can stop without further expanding the ring
+				outResults <- "Found 2 results. Stopping."
+				break
+			}
+
+			// If applicable, double the budget and repeat the request
+			if expanding {
+				budget *= 2
+				outResults <- "Increasing budget to " + fmt.Sprint(budget)
+				if budget == 32 {
+					outResults <- "Maximum budget of 32 reached. Stopping."
+					expanding = false
+				}
+			} else {
+				break
+			}
+		}
+
+		// Close the channel to signal that the search has ended
+		close(outResults)
+	}()
 }

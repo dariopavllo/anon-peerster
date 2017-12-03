@@ -12,22 +12,39 @@ import (
 	"os"
 )
 
-type Message struct {
-	Text string
-}
-
 func main() {
 	uiPort := flag.Int("UIPort", 10001, "the UIPort of the gossiper (default=10001)")
 	message := flag.String("msg", "", "the message to send")
 	fileName := flag.String("file", "", "the file name to upload")
 	fileHash := flag.String("request", "", "the hash of the file to download")
 	destination := flag.String("Dest", "", "the destination of a private message (optional)")
+	keywords := flag.String("keywords", "", "keywords separated by commas (optional)")
+	budget := flag.Int("budget", 0, "search budget (optional)")
 
 	flag.Parse()
 
 	baseUrl := "http://127.0.0.1:" + fmt.Sprint(*uiPort)
 
-	if *fileName != "" && *fileHash != "" && *destination != "" {
+	if *keywords != "" {
+		type Search struct {
+			Keywords string
+			Budget   string
+		}
+
+		data, _ := json.Marshal(Search{*keywords, fmt.Sprint(*budget)})
+		rs, err := http.Post(baseUrl+"/search", "text/json", bytes.NewBuffer(data))
+		if err != nil || rs.StatusCode != http.StatusOK {
+			fmt.Println("Unable to send the search request")
+		}
+		buf := make([]byte, 1024)
+		n, _ := rs.Body.Read(buf)
+		for n > 0 {
+			fmt.Print(string(buf[:n]))
+			n, _ = rs.Body.Read(buf)
+		}
+		fmt.Print("SEARCH FINISHED")
+
+	} else if *fileName != "" && *fileHash != "" {
 		// Download a file to disk
 		params := url.Values{}
 		params.Set("fileName", *fileName)

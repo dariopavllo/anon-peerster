@@ -148,3 +148,11 @@ button, .button {
 	font-weight: bold;
 	cursor: pointer;
 }
+
+#tabs-search div {
+	padding: 5px 0;
+}
+
+#tabs-search div:nth-child(odd){
+  background-color: #f0f0f0;
+}

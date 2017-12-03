@@ -42,6 +42,8 @@ func main() {
 	Context.RoutingTable = make(map[string]string)
 	Context.SharedFiles = make([]*SharedFile, 0)
 	Context.ChunkDatabase = make(map[string][]byte)
+	Context.MetafileDatabase = make(map[string]*FileDescriptor)
+	Context.PendingRequests = make([]*SearchRequest, 0)
 	Context.InitializeFileDatabase()
 
 	// Check if all peer addresses are valid, and resolve them if they contain domain names
@@ -91,7 +93,11 @@ func main() {
 		if msg.Rumor != nil {
 			// Received a rumor message from a peer
 			m := msg.Rumor
-			fmt.Printf("RUMOR origin %s from %s ID %d contents %s\n", m.Origin, sender, m.ID, m.Text)
+			if m.Text == "" {
+				fmt.Printf("ROUTE RUMOR origin %s from %s ID %d\n", m.Origin, sender, m.ID)
+			} else {
+				fmt.Printf("RUMOR origin %s from %s ID %d contents %s\n", m.Origin, sender, m.ID, m.Text)
+			}
 			printPeerList()
 
 			lastAddress := AddressStructToString(m.LastIP, m.LastPort)
@@ -155,6 +161,14 @@ func main() {
 
 		if msg.DataRep != nil {
 			Context.ForwardDataReply(msg.DataRep)
+		}
+
+		if msg.SearchReq != nil {
+			Context.ForwardSearchRequest(sender, msg.SearchReq)
+		}
+
+		if msg.SearchRep != nil {
+			Context.ForwardSearchReply(msg.SearchRep)
 		}
 	}
 	// Start listening for peer messages in another thread
