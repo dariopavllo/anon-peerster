@@ -23,8 +23,8 @@ type StatusPacket struct {
 }
 
 type GossipPacket struct {
-	Rumor     *RumorMessage
-	Status    *StatusPacket
+	Rumor  *RumorMessage
+	Status *StatusPacket
 }
 
 func Decode(data []byte, message interface{}) error {

@@ -70,9 +70,9 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 		if err == nil {
 
 			w.WriteHeader(http.StatusOK)
-			fmt.Printf("CLIENT %s %s\n", msg, Context.ThisNodeName)
+			fmt.Printf("CLIENT %s %s\n", msg, Context.DisplayName)
 			id := Context.AddNewMessage(msg)
-			rumorMsg := Context.BuildRumorMessage(Context.ThisNodeName, id)
+			rumorMsg := Context.BuildRumorMessage(Context.DisplayName, id)
 			randomPeer := Context.RandomPeer([]string{})
 			if randomPeer != "" {
 				fmt.Printf("MONGERING with %s\n", randomPeer)
@@ -155,16 +155,8 @@ func handleId(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "GET":
 		w.WriteHeader(http.StatusOK)
-		data, _ := json.Marshal(Context.ThisNodeName)
+		data, _ := json.Marshal([]string{Context.ThisNodeAlias, Context.DisplayName})
 		w.Write(data)
-
-	case "POST":
-		var newName string
-		err := safeDecode(w, r, &newName)
-		if err == nil {
-			Context.ThisNodeName = newName
-			w.WriteHeader(http.StatusOK)
-		}
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}

@@ -102,18 +102,18 @@ func VerifyChunk(chunkIndex int, metaFile []byte, receivedData []byte) bool {
 }
 
 func SaveFile(name string, content []byte) {
-	dir := DOWNLOAD_DIR + "/" + Context.ThisNodeName
+	dir := DOWNLOAD_DIR + "/" + Context.ThisNodeAlias
 	os.MkdirAll(dir, os.ModePerm)
 	ioutil.WriteFile(dir+"/"+name, content, 0644)
 }
 
 func LoadFile(name string) ([]byte, error) {
-	dir := DOWNLOAD_DIR + "/" + Context.ThisNodeName
+	dir := DOWNLOAD_DIR + "/" + Context.ThisNodeAlias
 	return ioutil.ReadFile(dir + "/" + name)
 }
 
 func ListFiles() []string {
-	dir := DOWNLOAD_DIR + "/" + Context.ThisNodeName
+	dir := DOWNLOAD_DIR + "/" + Context.ThisNodeAlias
 	os.MkdirAll(dir, os.ModePerm)
 	files, _ := ioutil.ReadDir(dir)
 	result := make([]string, len(files))

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/rsa"
 	"errors"
 	"math/rand"
 	"time"
@@ -8,20 +9,24 @@ import (
 
 // Classes for peers
 const (
-	Manual         = 0
-	Learned        = 1
+	Manual  = 0
+	Learned = 1
 )
 
 type contextType struct {
-	EventQueue        chan func()
-	GossipSocket      Socket
-	PeerSet           map[string]int // The integer value represents the class
-	Messages          map[string][]GossipMessageEntry
-	ThisNodeName      string
-	ThisNodeAddress   string
-	MessageLog        []MessageLogEntry
+	EventQueue      chan func()
+	GossipSocket    Socket
+	PeerSet         map[string]int // The integer value represents the class
+	Messages        map[string][]GossipMessageEntry
+	ThisNodeAlias   string
+	ThisNodeAddress string
+	MessageLog      []MessageLogEntry
 
-	StatusSubscriptions   map[string]func(statusMessage *StatusPacket)
+	StatusSubscriptions map[string]func(statusMessage *StatusPacket)
+
+	PrivateKey  *rsa.PrivateKey
+	PublicKey   *rsa.PublicKey
+	DisplayName string
 }
 
 type MessageLogEntry struct {
@@ -41,7 +46,7 @@ var Context contextType
 
 // GetMyNextID returns the next ID of this node.
 func (c *contextType) GetMyNextID() uint32 {
-	messages, found := c.Messages[c.ThisNodeName]
+	messages, found := c.Messages[c.DisplayName]
 	var nextID int
 	if found {
 		nextID = len(messages) + 1
@@ -56,13 +61,13 @@ func (c *contextType) AddNewMessage(message string) uint32 {
 	nextID := c.GetMyNextID()
 	if nextID == 1 {
 		// Initialize structure on the first message
-		c.Messages[c.ThisNodeName] = make([]GossipMessageEntry, 0)
+		c.Messages[c.DisplayName] = make([]GossipMessageEntry, 0)
 	}
 
-	c.Messages[c.ThisNodeName] = append(c.Messages[c.ThisNodeName], GossipMessageEntry{"", message})
+	c.Messages[c.DisplayName] = append(c.Messages[c.DisplayName], GossipMessageEntry{"", message})
 
 	c.MessageLog = append(c.MessageLog,
-		MessageLogEntry{time.Now(), c.ThisNodeName, nextID, c.ThisNodeAddress, message})
+		MessageLogEntry{time.Now(), c.DisplayName, nextID, c.ThisNodeAddress, message})
 	return nextID
 }
 

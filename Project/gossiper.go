@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
@@ -12,8 +13,9 @@ import (
 func main() {
 	uiPort := flag.Int("UIPort", 0, "port for the HTTP/CLI client")
 	gossipIpPort := flag.String("gossipAddr", "", "address/port for the gossiper")
-	nodeName := flag.String("name", "", "name of this node")
+	nodeName := flag.String("alias", "", "alias of this node")
 	peersParams := flag.String("peers", "", "peers separated by commas")
+	vanityName := flag.String("vanityName", "", "mine a display name that starts with this string")
 
 	flag.Parse()
 
@@ -25,13 +27,19 @@ func main() {
 	if *nodeName == "" {
 		FailOnError(errors.New("you must specify a name for this node"))
 	}
-	Context.ThisNodeName = *nodeName
+	Context.ThisNodeAlias = *nodeName
 
 	rand.Seed(time.Now().UTC().UnixNano()) // Initialize random seed
 	Context.PeerSet = make(map[string]int)
 	Context.Messages = make(map[string][]GossipMessageEntry)
 	Context.MessageLog = make([]MessageLogEntry, 0)
 	Context.StatusSubscriptions = make(map[string]func(*StatusPacket))
+	Context.PrivateKey = LoadKeyPair(*vanityName)
+	Context.PublicKey = &Context.PrivateKey.PublicKey
+	Context.DisplayName = DeriveNameFromFingerprint(ComputePublicKeyFingerprint(Context.PublicKey))
+	fmt.Println("Loaded public key with SHA-256 hash " + hex.EncodeToString(
+		ComputePublicKeyFingerprint(Context.PublicKey)))
+	fmt.Println("The display name of this node is: " + Context.DisplayName)
 
 	// Check if all peer addresses are valid, and resolve them if they contain domain names
 	for _, peerAddress := range strings.Split(*peersParams, ",") {
