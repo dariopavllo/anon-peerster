@@ -1,7 +1,6 @@
 package main
 
 import (
-	"crypto/rsa"
 	"errors"
 	"math/rand"
 	"time"
@@ -16,98 +15,63 @@ const (
 type contextType struct {
 	EventQueue      chan func()
 	GossipSocket    Socket
-	PeerSet         map[string]int // The integer value represents the class
-	Messages        map[string][]GossipMessageEntry
-	ThisNodeAlias   string
 	ThisNodeAddress string
-	MessageLog      []MessageLogEntry
+	PeerSet         map[string]int // The integer value represents the class
 
 	StatusSubscriptions map[string]func(statusMessage *StatusPacket)
 
-	PrivateKey  *rsa.PrivateKey
-	PublicKey   *rsa.PublicKey
-	DisplayName string
-}
+	PrivateKey  PrivateKey
+	PublicKey   PublicKey
+	DisplayName string // Self-signing name of this node, derived from the public key
 
-type MessageLogEntry struct {
-	FirstSeen   time.Time
-	FromNode    string
-	SeqID       uint32
-	FromAddress string
-	Content     string
-}
+	Database *DbConnection
 
-type GossipMessageEntry struct {
-	LastSender string
-	Text       string
+	PowTarget int // Number of leading zeros for proof-of-work
 }
 
 var Context contextType
 
 // GetMyNextID returns the next ID of this node.
 func (c *contextType) GetMyNextID() uint32 {
-	messages, found := c.Messages[c.DisplayName]
-	var nextID int
-	if found {
-		nextID = len(messages) + 1
-	} else {
-		nextID = 1
-	}
-	return uint32(nextID)
+	return c.Database.NextID(c.DisplayName)
 }
 
 // AddNewMessage adds a new message to this gossiper (when received from a client) and returns its ID.
 func (c *contextType) AddNewMessage(message string) uint32 {
 	nextID := c.GetMyNextID()
-	if nextID == 1 {
-		// Initialize structure on the first message
-		c.Messages[c.DisplayName] = make([]GossipMessageEntry, 0)
-	}
 
-	c.Messages[c.DisplayName] = append(c.Messages[c.DisplayName], GossipMessageEntry{"", message})
+	m := &MessageRecord{}
+	m.Data.ID = nextID
+	m.Data.Origin = c.DisplayName
+	m.Data.Destination = ""          // Public message
+	m.Data.Content = []byte(message) // Unencrypted content (since it is public)
+	m.Data.Signature = c.PrivateKey.Sign(m.Data.Payload())
+	m.Data.ComputeNonce(c.PowTarget)
+	m.FromAddress = c.ThisNodeAddress
+	m.DateSeen = time.Now().Format(time.RFC3339)
 
-	c.MessageLog = append(c.MessageLog,
-		MessageLogEntry{time.Now(), c.DisplayName, nextID, c.ThisNodeAddress, message})
+	c.Database.InsertOrUpdateMessage(m)
 	return nextID
 }
 
 // TryInsertMessage inserts a new message in order.
 // Returns true if the message is inserted, and false if it was already seen.
 // An error is returned if the supplied ID is not the expected next ID (i.e. if the message is out of order)
-func (c *contextType) TryInsertMessage(origin string, originAddress string, message string, id uint32, previousAddress string) (bool, error) {
+func (c *contextType) TryInsertMessage(origin string, originAddress string, message string, id uint32) (bool, error) {
 	if id == 0 {
 		return false, errors.New("message IDs must start from 1")
 	}
 
-	messages, found := c.Messages[origin]
-	if found {
-		expectedNextID := uint32(len(messages) + 1)
-		if id == expectedNextID {
-			// New message (in order)
-			c.Messages[origin] = append(c.Messages[origin], GossipMessageEntry{originAddress, message})
-
-			c.MessageLog = append(c.MessageLog,
-				MessageLogEntry{time.Now(), origin, id, originAddress, message})
-
-			return true, nil
-		} else if id < expectedNextID {
-			// Already seen
-			return false, nil
-		}
-
-		// Out-of-order delivery -> return an error
-		return false, errors.New("out of order message")
+	expectedNextID := c.Database.NextID(origin)
+	if id == expectedNextID {
+		// New message (in order)
+		// TODO change interface
+		return true, nil
+	} else if id < expectedNextID {
+		// Already seen
+		// TODO handle conflicts
+		return false, nil
 	} else {
-		// First message from that origin
-		if id == 1 {
-			c.Messages[origin] = make([]GossipMessageEntry, 1)
-			c.Messages[origin][0] = GossipMessageEntry{originAddress, message}
-			c.MessageLog = append(c.MessageLog,
-				MessageLogEntry{time.Now(), origin, 1, originAddress, message})
-
-			return true, nil
-		}
-
 		// Out-of-order delivery -> return an error
 		return false, errors.New("out of order message")
 	}
@@ -116,23 +80,13 @@ func (c *contextType) TryInsertMessage(origin string, originAddress string, mess
 // BuildStatusMessage returns a status packet with the vector clock of all the messages seen so far by this node
 func (c *contextType) BuildStatusMessage() *StatusPacket {
 	status := &StatusPacket{}
-	status.Want = make([]PeerStatus, len(c.Messages))
-	i := 0
-	for name, messages := range c.Messages {
-		status.Want[i].Identifier = name
-		status.Want[i].NextID = uint32(len(messages) + 1)
-		i++
-	}
+	status.Want = c.Database.VectorClock()
 	return status
 }
 
 // BuildRumorMessage returns a rumor message with the given (origin, ID) pair.
 func (c *contextType) BuildRumorMessage(origin string, id uint32) *RumorMessage {
-	rumor := &RumorMessage{Origin: origin}
-	rumor.Text = c.Messages[origin][id-1].Text
-	rumor.ID = id
-	rumor.LastIP, rumor.LastPort = SplitAddress(c.Messages[origin][id-1].LastSender)
-	return rumor
+	return &c.Database.GetMessage(origin, id).Data
 }
 
 // RandomPeer selects a random peer from the current set of peers.
@@ -155,16 +109,22 @@ func (c *contextType) RandomPeer(exclusionList []string) string {
 
 // VectorClockEquals tells whether the vector clock of this node equals the vector clock of the other node.
 func (c *contextType) VectorClockEquals(other []PeerStatus) bool {
+	this := c.Database.VectorClock()
 
 	// Compare lengths first
-	if len(c.Messages) != len(other) {
+	if len(this) != len(other) {
 		return false
 	}
 
+	vcMap := make(map[string]uint32)
+	for _, record := range this {
+		vcMap[record.Identifier] = record.NextID
+	}
+
 	for _, otherStatus := range other {
-		messages, found := c.Messages[otherStatus.Identifier]
+		match, found := vcMap[otherStatus.Identifier]
 		if found {
-			if uint32(len(messages)+1) != otherStatus.NextID {
+			if match != otherStatus.NextID {
 				return false
 			}
 		} else {
@@ -179,6 +139,11 @@ func (c *contextType) VectorClockEquals(other []PeerStatus) bool {
 // The first return value represents the messages seen by this node (but not by the other node),
 // whereas the second return value represents the messages seen by the other  node, but not by this node.
 func (c *contextType) VectorClockDifference(other []PeerStatus) ([]PeerStatus, []PeerStatus) {
+	this := c.Database.VectorClock()
+	vcMap := make(map[string]uint32)
+	for _, record := range this {
+		vcMap[record.Identifier] = record.NextID
+	}
 
 	// The difference is computed in linear time by using hash sets
 	otherDiff := make([]PeerStatus, 0)
@@ -189,19 +154,19 @@ func (c *contextType) VectorClockDifference(other []PeerStatus) ([]PeerStatus, [
 	for _, otherStatus := range other {
 		otherSet[otherStatus.Identifier] = true
 
-		messages, found := c.Messages[otherStatus.Identifier]
+		match, found := vcMap[otherStatus.Identifier]
 		if found {
-			if uint32(len(messages)+1) > otherStatus.NextID {
+			if match > otherStatus.NextID {
 				otherDiff = append(otherDiff, otherStatus)
-			} else if uint32(len(messages)+1) < otherStatus.NextID {
-				thisDiff = append(thisDiff, PeerStatus{otherStatus.Identifier, uint32(len(messages) + 1)})
+			} else if match < otherStatus.NextID {
+				thisDiff = append(thisDiff, PeerStatus{otherStatus.Identifier, match})
 			}
 		} else if otherStatus.NextID > 1 {
-			thisDiff = append(thisDiff, PeerStatus{otherStatus.Identifier, uint32(len(messages) + 1)})
+			thisDiff = append(thisDiff, PeerStatus{otherStatus.Identifier, match})
 		}
 	}
 
-	for peerName, _ := range c.Messages {
+	for peerName, _ := range vcMap {
 		if !otherSet[peerName] {
 			otherDiff = append(otherDiff, PeerStatus{peerName, 1})
 		}
@@ -225,4 +190,32 @@ func (c *contextType) RunSync(event func()) {
 		proceed <- true
 	}
 	<-proceed
+}
+
+func (c *contextType) GetPublicKeyOf(node string) PublicKey {
+	// Get special message with ID = 0 (public key announcement)
+	msg := c.Database.GetMessage(node, 0)
+	if msg == nil {
+		// Unknown node
+		return nil
+	}
+
+	return DeserializePublicKey(msg.Data.Content)
+}
+
+func (c *contextType) InsertKeyAnnouncementMessage() {
+	nextID := c.GetMyNextID()
+	if nextID == 0 {
+		m := &MessageRecord{}
+		m.Data.ID = nextID
+		m.Data.Origin = c.DisplayName
+		m.Data.Destination = "" // Public message
+		m.Data.Content = c.PublicKey.Serialize() // The content is our public key (serialized to bytes)
+		m.Data.Signature = make([]byte, 0) // Not needed, since the name is self-signing
+		m.Data.ComputeNonce(c.PowTarget)
+		m.FromAddress = c.ThisNodeAddress
+		m.DateSeen = time.Now().Format(time.RFC3339)
+
+		c.Database.InsertOrUpdateMessage(m)
+	}
 }

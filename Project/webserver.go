@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"encoding/hex"
 )
 
 // InitializeWebServer spawns an HTTP request handler on another thread.
@@ -57,12 +58,53 @@ func safeDecode(w http.ResponseWriter, r *http.Request, out interface{}) error {
 	}
 }
 
+type MessageLogEntry struct {
+	FirstSeen   string
+	FromNode    string
+	SeqID       uint32
+	FromAddress string
+	Content     string
+	Hash		string
+}
+
+func ConvertMessageFormat(m *MessageRecord) *MessageLogEntry {
+	out := &MessageLogEntry{}
+	out.FirstSeen = m.DateSeen
+	out.FromAddress = m.FromAddress
+	out.FromNode = m.Data.Origin
+	out.SeqID = m.Data.ID
+	if out.SeqID == 0 {
+		// Special message (public key announcement)
+		out.Content = "Joined the network for the first time and announced its public key."
+	} else if m.Data.Destination == "" {
+		// Public message (not encrypted, only signed)
+		out.Content = string(m.Data.Content)
+	} else {
+		// Regular encrypted private message
+		text, err := Context.PrivateKey.Decrypt(m.Data.Content)
+		if err == nil {
+			out.Content = string(text)
+		} else {
+			// The message is unintelligible
+			out.Content = "*** Unable to decrypt the message (sender used wrong key?) ***"
+		}
+	}
+	out.Hash = hex.EncodeToString(m.Data.ComputeHash())
+	return out
+}
+
+
 // handleMessages sends the list of messages to the client, or inserts a new message.
 func handleMessages(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "GET":
 		w.WriteHeader(http.StatusOK)
-		data, _ := json.Marshal(Context.MessageLog)
+		messages := Context.Database.GetAllMessagesTo("")
+		log := make([]*MessageLogEntry, 0)
+		for _, m := range messages {
+			log = append(log, ConvertMessageFormat(m))
+		}
+		data, _ := json.Marshal(log)
 		w.Write(data)
 	case "POST":
 		var msg string
@@ -155,7 +197,7 @@ func handleId(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "GET":
 		w.WriteHeader(http.StatusOK)
-		data, _ := json.Marshal([]string{Context.ThisNodeAlias, Context.DisplayName})
+		data, _ := json.Marshal(Context.DisplayName)
 		w.Write(data)
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)

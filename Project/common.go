@@ -4,15 +4,13 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"os"
 	"strings"
 )
 
 // FailOnError prints the error and terminates the program, if a non-nil error is given.
 func FailOnError(e error) {
 	if e != nil {
-		fmt.Println("Error: " + e.Error())
-		os.Exit(1)
+		panic(e.Error())
 	}
 }
 

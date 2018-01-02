@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
@@ -13,9 +12,9 @@ import (
 func main() {
 	uiPort := flag.Int("UIPort", 0, "port for the HTTP/CLI client")
 	gossipIpPort := flag.String("gossipAddr", "", "address/port for the gossiper")
-	nodeName := flag.String("alias", "", "alias of this node")
+	dataDir := flag.String("dataDir", "", "the directory for storing the DB and keys")
 	peersParams := flag.String("peers", "", "peers separated by commas")
-	vanityName := flag.String("vanityName", "", "mine a display name that starts with this string")
+	powDifficulty := flag.Int("powDifficulty", 16, "proof-of-work difficulty (default: 16 zeros)")
 
 	flag.Parse()
 
@@ -24,22 +23,20 @@ func main() {
 	}
 	Context.ThisNodeAddress = *gossipIpPort
 
-	if *nodeName == "" {
-		FailOnError(errors.New("you must specify a name for this node"))
+	if *dataDir == "" {
+		FailOnError(errors.New("you must specify a database directory (dataDir)"))
 	}
-	Context.ThisNodeAlias = *nodeName
 
 	rand.Seed(time.Now().UTC().UnixNano()) // Initialize random seed
 	Context.PeerSet = make(map[string]int)
-	Context.Messages = make(map[string][]GossipMessageEntry)
-	Context.MessageLog = make([]MessageLogEntry, 0)
 	Context.StatusSubscriptions = make(map[string]func(*StatusPacket))
-	Context.PrivateKey = LoadKeyPair(*vanityName)
-	Context.PublicKey = &Context.PrivateKey.PublicKey
-	Context.DisplayName = DeriveNameFromFingerprint(ComputePublicKeyFingerprint(Context.PublicKey))
-	fmt.Println("Loaded public key with SHA-256 hash " + hex.EncodeToString(
-		ComputePublicKeyFingerprint(Context.PublicKey)))
+	Context.PrivateKey, Context.PublicKey = LoadKeyPair(*dataDir)
+	Context.DisplayName = Context.PublicKey.DeriveName()
 	fmt.Println("The display name of this node is: " + Context.DisplayName)
+
+	Context.Database = NewConnection(*dataDir)
+	Context.PowTarget = *powDifficulty
+	Context.InsertKeyAnnouncementMessage()
 
 	// Check if all peer addresses are valid, and resolve them if they contain domain names
 	for _, peerAddress := range strings.Split(*peersParams, ",") {
@@ -68,8 +65,7 @@ func main() {
 	peerHandler := NewRequestListener(Context.GossipSocket)
 	peerHandler.Handler = func(data []byte, sender string) {
 		if sender == Context.ThisNodeAddress {
-			// This should NEVER happen, unless someone has sent a packet with a spoofed IP address
-			// Adding ourselves as a peer would crash the system
+			// This should not happen
 			return
 		}
 
@@ -88,21 +84,15 @@ func main() {
 		if msg.Rumor != nil {
 			// Received a rumor message from a peer
 			m := msg.Rumor
-			if m.Text == "" {
-				fmt.Printf("ROUTE RUMOR origin %s from %s ID %d\n", m.Origin, sender, m.ID)
-			} else {
-				fmt.Printf("RUMOR origin %s from %s ID %d contents %s\n", m.Origin, sender, m.ID, m.Text)
-			}
+
+			fmt.Printf("RUMOR origin %s from %s ID %d contents %s\n", m.Origin, sender, m.ID, string(m.Content))
 			printPeerList()
 
-			lastAddress := AddressStructToString(m.LastIP, m.LastPort)
-			inserted, _ := Context.TryInsertMessage(m.Origin, sender, m.Text, m.ID, lastAddress)
+			inserted, _ := Context.TryInsertMessage(m.Origin, sender, string(m.Content), m.ID)
 			Context.SendStatusMessage(sender) // Send status message in order to acknowledge
 
 			if inserted {
 				// This message has not been seen before
-
-				m.LastIP, m.LastPort = SplitAddress(sender)
 				randomPeer := Context.RandomPeer([]string{sender})
 				if randomPeer != "" {
 					fmt.Printf("MONGERING TEXT with %s\n", randomPeer)
@@ -169,7 +159,7 @@ func startRumormongering(msg *RumorMessage, destinationPeerAddress string) {
 		select {
 		case statusChannel <- statusMessage:
 			{
-				// Message received
+				// MessageRecord received
 			}
 		default:
 			{

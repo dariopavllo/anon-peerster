@@ -61,89 +61,6 @@ $(document).ready(function(){
 		})
     })
 	
-	$("#changeId").click(function(){
-		const name = $("#newName").val()
-		$.ajax({
-			type: 'POST',
-			url: "/id",
-			data: JSON.stringify(name),
-			success: function() {
-				update()
-			},
-			error: function() {
-				alert("Unable to change name")
-			},
-			contentType: "application/json"
-		})
-    })
-	
-	$("#searchFiles").click(function(){
-		const keywords = $("#keywords").val()
-		const budget = $("#budget").val()
-		const searchRes = document.getElementById("tabs-search")
-		searchRes.innerHTML = ""
-		
-		
-		const elem = document.createElement("div")
-				elem.appendChild(document.createTextNode("Search started..."))
-				searchRes.appendChild(elem)
-		
-		// Supports incremental results
-		let lastResponseLen = false
-		$.ajax({
-			type: 'POST',
-			url: "/search",
-			data: JSON.stringify({Keywords: keywords, Budget: budget}),
-			xhrFields: {
-				onprogress: e => {
-					let thisResponse, response = e.currentTarget.response
-                    if (lastResponseLen === false) {
-                        thisResponse = response
-                        lastResponseLen = response.length
-                    } else {
-                        thisResponse = response.substring(lastResponseLen)
-                        lastResponseLen = response.length
-                    }
-					chunks = thisResponse.split("\n")
-					chunks.forEach(chunk => {
-						if (chunk.length == 0) {
-							return
-						}
-						const elem = document.createElement("div")
-						
-						// Augment result by making it clickable
-						const dlMatch = "Downloadable match: "
-						if (chunk.startsWith(dlMatch)) {
-							const str = chunk.substr(dlMatch.length).split(":")
-							elem.appendChild(document.createTextNode(dlMatch))
-							const fileLink = document.createElement("button")
-							fileLink.append(document.createTextNode(chunk.substr(dlMatch.length)))
-							$(fileLink).click(function() {
-								$("input[name=fileName]").val(str[0])
-								$("input[name=fileHash]").val(str[1])
-								$("input[name=filePeer]").val("")
-								document.getElementById("downloadForm").submit()
-							})
-							elem.appendChild(fileLink)
-						} else {
-							elem.appendChild(document.createTextNode(chunk))
-						}
-						searchRes.appendChild(elem)
-					})
-                }
-			},
-			success: function() {
-				const elem = document.createElement("div")
-				elem.appendChild(document.createTextNode("Search completed"))
-				searchRes.appendChild(elem)
-			},
-			error: function() {
-				alert("Unable to send search request")
-			},
-			dataType: "text"
-		})
-    })
-	
 	$("#tabs").tabs()
 })
 
@@ -155,7 +72,8 @@ function update() {
 		$.get("/routes")
 	)
 	.then(function(id, nodes, messages, routes) {
-		$(".nodeName").text(JSON.parse(id[0]))
+		const name = JSON.parse(id[0])
+		$(".nodeName").text(name)
 		const chatBox = document.getElementById("tabs-1")
 		if (chatBox !== null) {
 			chatBox.innerHTML = ""
