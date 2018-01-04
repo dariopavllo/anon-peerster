@@ -25,7 +25,7 @@ const DISPLAY_NAME_BITS = 80
 
 type PublicKey interface {
 	Verify(message []byte, signature []byte) bool
-	Encrypt(message []byte) []byte
+	Encrypt(message []byte) ([]byte, error)
 	Serialize() []byte
 	Fingerprint() []byte
 	DeriveName() string
@@ -46,7 +46,7 @@ type RsaPrivateKey struct {
 
 // GenerateKeyPair generates a 2048-bit RSA public/private key pair
 func GenerateKeyPair(dataDirectory string) (PrivateKey, PublicKey) {
-	fmt.Println("Generating a 2048-bit RSA keypair for the first time.")
+	fmt.Println("INFO: generating a 2048-bit RSA keypair for the first time.")
 
 	key, err := rsa.GenerateKey(rand.Reader, RSA_KEY_SIZE_BITS)
 	FailOnError(err)
@@ -121,10 +121,9 @@ func (k *RsaPublicKey) Verify(message []byte, signature []byte) bool {
 	return err == nil
 }
 
-func (k *RsaPublicKey) Encrypt(message []byte) []byte {
+func (k *RsaPublicKey) Encrypt(message []byte) ([]byte, error) {
 	enc, err := rsa.EncryptOAEP(sha256.New(), rand.Reader, k.key, message, nil)
-	FailOnError(err)
-	return enc
+	return enc, err
 }
 
 func (k *RsaPrivateKey) Sign(message []byte) []byte {

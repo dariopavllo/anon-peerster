@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"encoding/binary"
 )
 
 // InitializeWebServer spawns an HTTP request handler on another thread.
@@ -15,7 +16,7 @@ func InitializeWebServer(port int) {
 	r.HandleFunc("/node", handle(handleNodes))
 	r.HandleFunc("/id", handle(handleId))
 	r.HandleFunc("/routes", handle(handleRoutes))
-	r.HandleFunc("/privateMessage", handle(handlePrivateMessages))
+	r.HandleFunc("/privateMessage", handlePrivateMessages)
 	r.Handle("/", http.FileServer(http.Dir("webclient")))
 	go http.ListenAndServe("localhost:"+fmt.Sprint(port), r)
 }
@@ -75,18 +76,36 @@ func ConvertMessageFormat(m *MessageRecord) *MessageLogEntry {
 	out.SeqID = m.Data.ID
 	if out.SeqID == 0 {
 		// Special message (public key announcement)
-		out.Content = "Joined the network for the first time and announced its public key."
+		out.Content = "joined the network for the first time and announced its public key."
 	} else if m.Data.Destination == "" {
 		// Public message (not encrypted, only signed)
 		out.Content = string(m.Data.Content)
 	} else {
 		// Regular encrypted private message
-		text, err := Context.PrivateKey.Decrypt(m.Data.Content)
-		if err == nil {
-			out.Content = string(text)
-		} else {
+		if len(m.Data.Content) < 2 {
 			// The message is unintelligible
-			out.Content = "*** Unable to decrypt the message (sender used wrong key?) ***"
+			out.Content = "*** Unable to decrypt the message (malformed data) ***"
+		} else {
+			splitPoint := binary.LittleEndian.Uint16(m.Data.Content[:2])
+			if int(splitPoint) >= len(m.Data.Content) {
+				out.Content = "*** Unable to decrypt the message (malformed data) ***"
+			} else {
+				var text []byte
+				var err error
+				if out.FromNode == Context.DisplayName {
+					// The message has been sent by us
+					text, err = Context.PrivateKey.Decrypt(m.Data.Content[2:2+splitPoint])
+				} else {
+					// The message has been sent by the other node
+					text, err = Context.PrivateKey.Decrypt(m.Data.Content[2+splitPoint:])
+				}
+				if err == nil {
+					out.Content = string(text)
+				} else {
+					// The message is unintelligible
+					out.Content = "*** Unable to decrypt the message (the sender used a wrong key?) ***"
+				}
+			}
 		}
 	}
 	out.Hash = hex.EncodeToString(m.Data.ComputeHash())
@@ -117,9 +136,13 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 		err := safeDecode(w, r, &msg)
 		if err == nil {
 
-			w.WriteHeader(http.StatusOK)
-			fmt.Printf("MESSAGE FROM CLIENT: %s\n", msg)
-			id := Context.AddNewMessage(msg) // Blocking on this thread, but not on the main thread
+
+			fmt.Printf("PUBLIC MESSAGE FROM CLIENT: %s\n", msg)
+			id, err := Context.AddNewMessage(msg, "") // Blocking on this thread, but not on the main thread
+			if err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
 			Context.RunSync(func() {
 				rumorMsg := Context.BuildRumorMessage(Context.DisplayName, id)
 				randomPeer := Context.RandomPeer([]string{})
@@ -128,6 +151,61 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 					startRumormongering(rumorMsg, randomPeer)
 				}
 			})
+
+			w.WriteHeader(http.StatusOK)
+		}
+
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+// handlePrivateMessages handles direct messages between nodes.
+func handlePrivateMessages(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case "GET":
+		w.WriteHeader(http.StatusOK)
+		var log []*MessageLogEntry
+		Context.RunSync(func() {
+
+			origin := r.URL.Query().Get("name")
+			messages := Context.Database.GetAllMessagesBetween(origin, Context.DisplayName)
+			log = make([]*MessageLogEntry, 0)
+			for _, m := range messages {
+				log = append(log, ConvertMessageFormat(m))
+			}
+
+		})
+		data, _ := json.Marshal(log)
+		w.Write(data)
+
+	case "POST":
+		// The insertion of a new message is asynchronous because of the proof-of-work computation
+		type OutgoingMessage struct {
+			Destination string
+			Content     string
+		}
+
+		var msg OutgoingMessage
+		err := safeDecode(w, r, &msg)
+		if err == nil {
+
+			fmt.Printf("PRIVATE MESSAGE FROM CLIENT TO %s\n", msg.Destination)
+
+			id, err := Context.AddNewMessage(msg.Content, msg.Destination) // Blocking on this thread, but not on the main thread
+			if err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			Context.RunSync(func() {
+				rumorMsg := Context.BuildRumorMessage(Context.DisplayName, id)
+				randomPeer := Context.RandomPeer([]string{})
+				if randomPeer != "" {
+					fmt.Printf("MONGERING with %s\n", randomPeer)
+					startRumormongering(rumorMsg, randomPeer)
+				}
+			})
+			w.WriteHeader(http.StatusOK)
 		}
 
 	default:
@@ -177,22 +255,14 @@ func handleNodes(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleRoutes sends the list of known nodes / routes.
+
+// handleRoutes sends the list of known nodes.
 func handleRoutes(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "GET":
 		w.WriteHeader(http.StatusOK)
-
-		type Route struct {
-			Origin  string
-			Address string
-		}
-
-		routeList := make([]Route, 0)
-		/*for origin, address := range Context.RoutingTable {
-			routeList = append(routeList, Route{origin, address})
-		}*/
-		data, _ := json.Marshal(routeList)
+		nodeList := Context.Database.NodeList()
+		data, _ := json.Marshal(nodeList)
 		w.Write(data)
 
 	default:
@@ -207,44 +277,6 @@ func handleId(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		data, _ := json.Marshal(Context.DisplayName)
 		w.Write(data)
-	default:
-		w.WriteHeader(http.StatusMethodNotAllowed)
-	}
-}
-
-// handlePrivateMessages handles direct messages between nodes.
-func handlePrivateMessages(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case "GET":
-		//origin := r.URL.Query().Get("name")
-		w.WriteHeader(http.StatusOK)
-		//messages, found := Context.PrivateMessageLog[origin]
-		messages := []MessageLogEntry{}
-		found := false
-		var data []byte
-		if found && len(messages) > 0 {
-			data, _ = json.Marshal(messages)
-		} else {
-			data, _ = json.Marshal([]MessageLogEntry{})
-		}
-		w.Write(data)
-
-	case "POST":
-		type OutgoingMessage struct {
-			Destination string
-			Content     string
-		}
-
-		var msg OutgoingMessage
-		err := safeDecode(w, r, &msg)
-		if err == nil {
-			w.WriteHeader(http.StatusOK)
-			//fmt.Printf("PRIVATE SEND \"%s\" TO %s\n", msg.Content, msg.Destination)
-			//outMsg := Context.BuildPrivateMessage(msg.Destination, msg.Content)
-			//Context.LogPrivateMessage(Context.ThisNodeAddress, outMsg)
-			//Context.ForwardPrivateMessage(Context.ThisNodeAddress, outMsg)
-		}
-
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}

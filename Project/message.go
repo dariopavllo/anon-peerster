@@ -114,7 +114,7 @@ func (m *RumorMessage) ComputeNonce(target int) {
 	// The initial nonce is "all zeros"
 	m.Nonce = make([]byte, NONCE_LENGTH)
 
-	fmt.Printf("Starting a nonce computation with %d leading zeros...\n", target)
+	fmt.Printf("INFO: starting a nonce computation with %d leading zeros...\n", target)
 	t1 := time.Now()
 	tries := uint64(0)
 	for {
@@ -134,5 +134,5 @@ func (m *RumorMessage) ComputeNonce(target int) {
 		}
 	}
 	t2 := time.Now()
-	fmt.Printf("Nonce computed in %.2f seconds (%d tries)\n", t2.Sub(t1).Seconds(), tries)
+	fmt.Printf("INFO: nonce computed in %.2f seconds (%d tries)\n", t2.Sub(t1).Seconds(), tries)
 }

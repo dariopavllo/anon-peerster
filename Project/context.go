@@ -5,6 +5,7 @@ import (
 	"math/rand"
 	"time"
 	"strings"
+	"encoding/binary"
 )
 
 // Classes for peers
@@ -38,10 +39,12 @@ func (c *contextType) GetMyNextID() uint32 {
 }
 
 // AddNewMessage adds a new message to this gossiper (when received from a client) and returns its ID.
-func (c *contextType) AddNewMessage(message string) uint32 {
+// The destination can be left empty (in this case, it is treated as a public message).
+func (c *contextType) AddNewMessage(message string, destination string) (uint32, error) {
 
 	var m *MessageRecord
 	var nextID uint32
+	var errPk error
 	// Run on main thread
 	c.RunSync(func() {
 		nextID = c.GetMyNextID()
@@ -49,12 +52,52 @@ func (c *contextType) AddNewMessage(message string) uint32 {
 		m = &MessageRecord{}
 		m.Data.ID = nextID
 		m.Data.Origin = c.DisplayName
-		m.Data.Destination = ""          // Public message
-		m.Data.Content = []byte(message) // Unencrypted content (since it is public)
+		m.Data.Destination = destination
+
+		if destination == "" {
+			// Public message
+			m.Data.Content = []byte(message) // Unencrypted content (since it is public)
+		} else {
+			// Private message
+			pk, err := c.GetPublicKeyOf(destination)
+			if err != nil {
+				// Public key not found (unknown node)
+				errPk = err
+				return
+			}
+
+			// The content is stored and encrypted twice, first with the public key of the sender (who should be able to
+			// see their own message), then with the public key of the recipient
+
+			encryptedMine, err := c.PublicKey.Encrypt([]byte(message))
+			if err != nil {
+				// Encryption error (message too long?)
+				errPk = err
+				return
+			}
+
+			encryptedTheirs, err := pk.Encrypt([]byte(message))
+			if err != nil {
+				// Encryption error (message too long?)
+				errPk = err
+				return
+			}
+
+			// Store the length of the first chunk (so as to identify the split point)
+			lenBin := make([]byte, 2)
+			binary.LittleEndian.PutUint16(lenBin, uint16(len(encryptedMine)))
+			m.Data.Content = append(lenBin, encryptedMine...)
+			m.Data.Content = append(m.Data.Content, encryptedTheirs...)
+		}
+
 		m.Data.Signature = c.PrivateKey.Sign(m.Data.Payload())
 		m.FromAddress = "localhost:" + strings.Split(c.ThisNodeAddress, ":")[1]
 		m.DateSeen = time.Now().Format(time.RFC3339)
+		errPk = nil
 	})
+	if errPk != nil {
+		return 0, errPk
+	}
 
 	// Compute proof-of-work nonce on the caller thread
 	m.Data.ComputeNonce(c.PowTarget)
@@ -68,7 +111,7 @@ func (c *contextType) AddNewMessage(message string) uint32 {
 
 		c.Database.InsertOrUpdateMessage(m)
 	})
-	return nextID
+	return nextID, nil
 }
 
 // VerifyMessage verifies the content of a message prior to accepting it, in terms of its structure,

@@ -32,7 +32,7 @@ func main() {
 	Context.StatusSubscriptions = make(map[string]func(*StatusPacket))
 	Context.PrivateKey, Context.PublicKey = LoadKeyPair(*dataDir)
 	Context.DisplayName = Context.PublicKey.DeriveName()
-	fmt.Println("The display name of this node is: " + Context.DisplayName)
+	fmt.Println("INFO: the display name of this node is: " + Context.DisplayName)
 
 	Context.Database = NewConnection(*dataDir)
 	Context.PowTarget = *powDifficulty
@@ -46,15 +46,6 @@ func main() {
 			FailOnError(err)
 			Context.PeerSet[addr] = Manual
 		}
-	}
-
-	// printPeerList prints the peers seen so far
-	printPeerList := func() {
-		peerList := make([]string, 0)
-		for address := range Context.PeerSet {
-			peerList = append(peerList, address)
-		}
-		fmt.Println(strings.Join(peerList, ","))
 	}
 
 	// Create the event queue as a buffered channel of type Event
@@ -85,8 +76,13 @@ func main() {
 			// Received a rumor message from a peer
 			m := msg.Rumor
 
-			fmt.Printf("RUMOR origin %s from %s ID %d contents %s\n", m.Origin, sender, m.ID, string(m.Content))
-			printPeerList()
+			if m.ID == 0 {
+				fmt.Printf("RUMOR (key announcement) origin %s:%d from %s\n", m.Origin, m.ID, sender)
+			} else if m.Destination == "" {
+				fmt.Printf("RUMOR (public msg) origin %s:%d from %s\n", m.Origin, m.ID, sender)
+			} else {
+				fmt.Printf("RUMOR (private msg) origin %s:%d from %s\n", m.Origin, m.ID, sender)
+			}
 
 			err := Context.VerifyMessage(m)
 			if err != nil {
@@ -101,7 +97,7 @@ func main() {
 					// This message has not been seen before
 					randomPeer := Context.RandomPeer([]string{sender})
 					if randomPeer != "" {
-						fmt.Printf("MONGERING TEXT with %s\n", randomPeer)
+						fmt.Printf("MONGERING with %s\n", randomPeer)
 						startRumormongering(m, randomPeer)
 					}
 				}
@@ -112,10 +108,9 @@ func main() {
 			m := msg.Status
 			fmt.Printf("STATUS from %s", sender)
 			for _, s := range m.Want {
-				fmt.Printf(" origin %s nextID %d", s.Identifier, s.NextID)
+				fmt.Printf(" %s:%d", s.Identifier, s.NextID)
 			}
 			fmt.Printf("\n")
-			printPeerList()
 			if handler, found := Context.StatusSubscriptions[sender]; found {
 				// Some task is expecting a status message -> forward it
 				handler(m)
@@ -227,7 +222,7 @@ func synchronizeMessages(otherStatus []PeerStatus, destinationPeerAddress string
 		inSync = false
 		rumor := Context.BuildRumorMessage(mismatch.Identifier, id)
 		outMsg := GossipPacket{Rumor: rumor}
-		fmt.Printf("MONGERING TEXT with %s\n", destinationPeerAddress)
+		fmt.Printf("MONGERING with %s\n", destinationPeerAddress)
 		Context.GossipSocket.Send(Encode(&outMsg), destinationPeerAddress)
 	}
 

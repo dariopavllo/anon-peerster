@@ -85,6 +85,20 @@ func (db *DbConnection) VectorClock() []PeerStatus {
 	return status
 }
 
+func (db *DbConnection) NodeList() []string {
+	result, err := db.Connection.Query("SELECT DISTINCT Origin FROM messages ORDER BY Origin ASC")
+	FailOnError(err)
+	defer result.Close()
+
+	nodes := make([]string, 0)
+	for result.Next() {
+		var origin string
+		result.Scan(&origin)
+		nodes = append(nodes, origin)
+	}
+	return nodes
+}
+
 func (db *DbConnection) InsertOrUpdateMessage(m *MessageRecord) {
 	// Start a new transaction
 	tx, err := db.Connection.Begin()
@@ -159,22 +173,21 @@ func (db *DbConnection) GetAllMessagesTo(destination string) []*MessageRecord {
 	return output
 }
 
-func (db *DbConnection) GetAllMessagesFromTo(origin string, destination string) []*MessageRecord {
-	stmt, err := db.Connection.Prepare("SELECT ID, Content, Signature, Nonce," +
-		"DateSeen, FromAddress FROM messages WHERE Origin = ? AND Destination = ?")
+func (db *DbConnection) GetAllMessagesBetween(origin string, destination string) []*MessageRecord {
+	stmt, err := db.Connection.Prepare("SELECT ID, Origin, Destination, Content, Signature, Nonce," +
+		"DateSeen, FromAddress FROM messages WHERE (Origin = ? AND Destination = ?)" +
+		"OR (Origin = ? AND Destination = ?) ORDER BY DateSeen ASC")
 	FailOnError(err)
 	defer stmt.Close()
 
-	result, err := stmt.Query(origin, destination)
+	result, err := stmt.Query(origin, destination, destination, origin)
 	FailOnError(err)
 	defer result.Close()
 
 	output := make([]*MessageRecord, 0)
 	for result.Next() {
 		m := &MessageRecord{}
-		m.Data.Origin = origin
-		m.Data.Destination = destination
-		result.Scan(&m.Data.ID, &m.Data.Content, &m.Data.Signature,
+		result.Scan(&m.Data.ID, &m.Data.Origin, &m.Data.Destination, &m.Data.Content, &m.Data.Signature,
 			&m.Data.Nonce, &m.DateSeen, &m.FromAddress)
 		output = append(output, m)
 	}

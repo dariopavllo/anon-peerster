@@ -39,6 +39,10 @@ html, body {
 	height: 50%;
 }
 
+#nodeBox .button {
+	font-family: monospace;
+}
+
 #peerBox span, #tabs li span {
 	color: #E00;
 	cursor: pointer;
@@ -105,7 +109,8 @@ input[type=text]:disabled, input[type=submit]:disabled, button:disabled {
 }
 
 .title span {
-	font-weight: normal;
+	font-family: monospace;
+	font-size: 11pt;
 }
 
 button, .button {
@@ -145,8 +150,13 @@ button, .button {
 	overflow-y: scroll;
 }
 
+#tabs > div div {
+	font-size: 11pt;
+}
+
 #tabs div span {
 	font-weight: bold;
+	font-family: monospace;
 }
 
 #routeContent span {
@@ -165,4 +175,12 @@ button, .button {
 #loading {
 	display: none;
 	vertical-align: middle;
+}
+
+#chatBox img {
+	vertical-align: middle;
+}
+
+.myName {
+	color: #08c;
 }
