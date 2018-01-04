@@ -1,23 +1,23 @@
 package main
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"net/http"
-	"encoding/hex"
 )
 
 // InitializeWebServer spawns an HTTP request handler on another thread.
 func InitializeWebServer(port int) {
 	r := http.NewServeMux()
-	r.HandleFunc("/message", handle(handleMessages))
+	r.HandleFunc("/message", handleMessages) // Asynchronous (due to proof-of-work)
 	r.HandleFunc("/node", handle(handleNodes))
 	r.HandleFunc("/id", handle(handleId))
 	r.HandleFunc("/routes", handle(handleRoutes))
 	r.HandleFunc("/privateMessage", handle(handlePrivateMessages))
 	r.Handle("/", http.FileServer(http.Dir("webclient")))
-	go http.ListenAndServe(":"+fmt.Sprint(port), r)
+	go http.ListenAndServe("localhost:"+fmt.Sprint(port), r)
 }
 
 // handle wraps a handler so that it gets processed on the main event loop.
@@ -64,7 +64,7 @@ type MessageLogEntry struct {
 	SeqID       uint32
 	FromAddress string
 	Content     string
-	Hash		string
+	Hash        string
 }
 
 func ConvertMessageFormat(m *MessageRecord) *MessageLogEntry {
@@ -93,33 +93,41 @@ func ConvertMessageFormat(m *MessageRecord) *MessageLogEntry {
 	return out
 }
 
-
 // handleMessages sends the list of messages to the client, or inserts a new message.
 func handleMessages(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "GET":
 		w.WriteHeader(http.StatusOK)
-		messages := Context.Database.GetAllMessagesTo("")
-		log := make([]*MessageLogEntry, 0)
-		for _, m := range messages {
-			log = append(log, ConvertMessageFormat(m))
-		}
+		var log []*MessageLogEntry
+		Context.RunSync(func() {
+
+			messages := Context.Database.GetAllMessagesTo("")
+			log = make([]*MessageLogEntry, 0)
+			for _, m := range messages {
+				log = append(log, ConvertMessageFormat(m))
+			}
+
+		})
 		data, _ := json.Marshal(log)
 		w.Write(data)
+
 	case "POST":
+		// The insertion of a new message is asynchronous because of the proof-of-work computation
 		var msg string
 		err := safeDecode(w, r, &msg)
 		if err == nil {
 
 			w.WriteHeader(http.StatusOK)
-			fmt.Printf("CLIENT %s %s\n", msg, Context.DisplayName)
-			id := Context.AddNewMessage(msg)
-			rumorMsg := Context.BuildRumorMessage(Context.DisplayName, id)
-			randomPeer := Context.RandomPeer([]string{})
-			if randomPeer != "" {
-				fmt.Printf("MONGERING with %s\n", randomPeer)
-				startRumormongering(rumorMsg, randomPeer)
-			}
+			fmt.Printf("MESSAGE FROM CLIENT: %s\n", msg)
+			id := Context.AddNewMessage(msg) // Blocking on this thread, but not on the main thread
+			Context.RunSync(func() {
+				rumorMsg := Context.BuildRumorMessage(Context.DisplayName, id)
+				randomPeer := Context.RandomPeer([]string{})
+				if randomPeer != "" {
+					fmt.Printf("MONGERING with %s\n", randomPeer)
+					startRumormongering(rumorMsg, randomPeer)
+				}
+			})
 		}
 
 	default:

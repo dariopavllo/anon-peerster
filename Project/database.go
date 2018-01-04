@@ -14,7 +14,7 @@ type MessageRecord struct {
 	Data            RumorMessage
 	DateSeen        string
 	FromAddress     string
-	ComputedHashStr string
+	ComputedHashStr string // This field is used just for the GUI
 }
 
 func (m *MessageRecord) ComputeHashStr() string {
@@ -125,6 +125,12 @@ func (db *DbConnection) GetMessage(origin string, id uint32) *MessageRecord {
 		m.Data.ID = id
 		result.Scan(&m.Data.Destination, &m.Data.Content, &m.Data.Signature,
 			&m.Data.Nonce, &m.DateSeen, &m.FromAddress)
+		if len(m.Data.Content) == 0 {
+			m.Data.Content = make([]byte, 0) // Fix for serialization
+		}
+		if len(m.Data.Signature) == 0 {
+			m.Data.Signature = make([]byte, 0) // Fix for serialization
+		}
 		return m
 	} else {
 		return nil

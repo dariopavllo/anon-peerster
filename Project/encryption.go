@@ -9,6 +9,7 @@ import (
 	"encoding/base32"
 	"encoding/binary"
 	"encoding/gob"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"math/big"
@@ -87,13 +88,16 @@ func (k *RsaPublicKey) Serialize() []byte {
 	return append(k.key.N.Bytes(), exponent...)
 }
 
-func DeserializePublicKey(data []byte) PublicKey {
+func DeserializePublicKey(data []byte) (PublicKey, error) {
+	if len(data) != RSA_KEY_SIZE_BITS/8+4 {
+		return nil, errors.New("invalid key length")
+	}
 	pkLen := len(data) - 4
 	publicKey := &rsa.PublicKey{}
 	publicKey.N = big.NewInt(0)
 	publicKey.N.SetBytes(data[:pkLen])
 	publicKey.E = int(binary.LittleEndian.Uint32(data[pkLen:]))
-	return &RsaPublicKey{publicKey}
+	return &RsaPublicKey{publicKey}, nil
 }
 
 // Fingerprint computes the SHA-256 fingerprint of an RSA public key

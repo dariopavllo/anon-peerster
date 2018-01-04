@@ -88,15 +88,22 @@ func main() {
 			fmt.Printf("RUMOR origin %s from %s ID %d contents %s\n", m.Origin, sender, m.ID, string(m.Content))
 			printPeerList()
 
-			inserted, _ := Context.TryInsertMessage(m.Origin, sender, string(m.Content), m.ID)
-			Context.SendStatusMessage(sender) // Send status message in order to acknowledge
+			err := Context.VerifyMessage(m)
+			if err != nil {
+				// The message failed the verification step
+				fmt.Printf("Dropped rumor message due to failed verification (%s)\n", err.Error())
+			} else {
+				// Valid message
+				inserted, _ := Context.TryInsertMessage(m, sender)
+				Context.SendStatusMessage(sender) // Send status message in order to acknowledge
 
-			if inserted {
-				// This message has not been seen before
-				randomPeer := Context.RandomPeer([]string{sender})
-				if randomPeer != "" {
-					fmt.Printf("MONGERING TEXT with %s\n", randomPeer)
-					startRumormongering(m, randomPeer)
+				if inserted {
+					// This message has not been seen before
+					randomPeer := Context.RandomPeer([]string{sender})
+					if randomPeer != "" {
+						fmt.Printf("MONGERING TEXT with %s\n", randomPeer)
+						startRumormongering(m, randomPeer)
+					}
 				}
 			}
 		}

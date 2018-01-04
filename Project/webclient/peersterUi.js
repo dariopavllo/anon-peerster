@@ -12,6 +12,10 @@ $(document).ready(function(){
 	$("#sendMessage").click(function() {
 		const msg = $("#message").val()
 		
+		$("#sendMessage").prop("disabled", true)
+		$("#message").prop("disabled", true)
+		$("#loading").show()
+		
 		// Check selected tab
 		const nodeName = $('li[aria-selected="true"]').attr("data-nodename")
 		if (typeof nodeName !== typeof undefined && nodeName !== false) {
@@ -22,6 +26,10 @@ $(document).ready(function(){
 				data: JSON.stringify({Destination: nodeName, Content: msg}),
 				success: function() {
 					update()
+					$("#sendMessage").prop("disabled", false)
+					$("#message").prop("disabled", false)
+					$("#message").val("")
+					$("#loading").hide()
 				},
 				error: function() {
 					alert("Unable to send private message")
@@ -36,6 +44,11 @@ $(document).ready(function(){
 				data: JSON.stringify(msg),
 				success: function() {
 					update()
+					$("#sendMessage").prop("disabled", false)
+					$("#message").prop("disabled", false)
+					$("#message").val("")
+					$("#loading").hide()
+					$('#tabs-1').scrollTop(1E10);
 				},
 				error: function() {
 					alert("Unable to send gossip message")

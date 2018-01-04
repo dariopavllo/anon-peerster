@@ -91,6 +91,11 @@ input[type=text], input[type=submit], button, .button {
 	box-shadow: inset 0 2px 0 rgba(0, 0, 0, 0.2), 0 0 4px rgba(0, 0, 0, 0.1);
 }
 
+input[type=text]:disabled, input[type=submit]:disabled, button:disabled {
+	color: #999999;
+	background: #eee;
+}
+
 .title {
 	font-weight: bold;
 	margin: 0;
@@ -133,7 +138,7 @@ button, .button {
 }
 
 #tabs > div {
-	height: 90%;
+	height: 85%;
 }
 
 #tabs > div {
@@ -154,5 +159,10 @@ button, .button {
 }
 
 #tabs-search div:nth-child(odd){
-  background-color: #f0f0f0;
+	background-color: #f0f0f0;
+}
+
+#loading {
+	display: none;
+	vertical-align: middle;
 }

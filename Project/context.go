@@ -4,6 +4,7 @@ import (
 	"errors"
 	"math/rand"
 	"time"
+	"strings"
 )
 
 // Classes for peers
@@ -38,38 +39,106 @@ func (c *contextType) GetMyNextID() uint32 {
 
 // AddNewMessage adds a new message to this gossiper (when received from a client) and returns its ID.
 func (c *contextType) AddNewMessage(message string) uint32 {
-	nextID := c.GetMyNextID()
 
-	m := &MessageRecord{}
-	m.Data.ID = nextID
-	m.Data.Origin = c.DisplayName
-	m.Data.Destination = ""          // Public message
-	m.Data.Content = []byte(message) // Unencrypted content (since it is public)
-	m.Data.Signature = c.PrivateKey.Sign(m.Data.Payload())
+	var m *MessageRecord
+	var nextID uint32
+	// Run on main thread
+	c.RunSync(func() {
+		nextID = c.GetMyNextID()
+
+		m = &MessageRecord{}
+		m.Data.ID = nextID
+		m.Data.Origin = c.DisplayName
+		m.Data.Destination = ""          // Public message
+		m.Data.Content = []byte(message) // Unencrypted content (since it is public)
+		m.Data.Signature = c.PrivateKey.Sign(m.Data.Payload())
+		m.FromAddress = "localhost:" + strings.Split(c.ThisNodeAddress, ":")[1]
+		m.DateSeen = time.Now().Format(time.RFC3339)
+	})
+
+	// Compute proof-of-work nonce on the caller thread
 	m.Data.ComputeNonce(c.PowTarget)
-	m.FromAddress = c.ThisNodeAddress
-	m.DateSeen = time.Now().Format(time.RFC3339)
 
-	c.Database.InsertOrUpdateMessage(m)
+	c.RunSync(func() {
+		err := c.VerifyMessage(&m.Data)
+		if err != nil {
+			// Something wrong has happened
+			panic(err)
+		}
+
+		c.Database.InsertOrUpdateMessage(m)
+	})
 	return nextID
+}
+
+// VerifyMessage verifies the content of a message prior to accepting it, in terms of its structure,
+// proof-of-work nonce, and digital signature.
+func (c *contextType) VerifyMessage(message *RumorMessage) error {
+	// Verify the structure of the message (as well as the proof-of-work nonce)
+	err := message.SanityCheck(c.PowTarget)
+	if err != nil {
+		return err
+	}
+
+	if message.ID == 0 {
+		// This message represents a public key announcement. Let's verify it.
+		// Note that we do not need the digital signature ("Signature" field) to validate the message,
+		// as the names are self-signing (they are derived from the public key).
+		pk, err := DeserializePublicKey(message.Content)
+		if err != nil {
+			return err
+		}
+		if pk.DeriveName() != message.Origin {
+			return errors.New("invalid public key associated with " + message.Origin + " (verification failed)")
+		}
+	} else {
+		// This is a regular message -> get the public key of the node
+		pk, err := c.GetPublicKeyOf(message.Origin)
+		if err != nil {
+			// If the public key cannot be found, this message is either bogus/corrupt or out-of-order
+			return err
+		}
+		if !pk.Verify(message.Payload(), message.Signature) {
+			return errors.New("invalid digital signature (verification failed)")
+		}
+	}
+
+	// All tests passed!
+	return nil
 }
 
 // TryInsertMessage inserts a new message in order.
 // Returns true if the message is inserted, and false if it was already seen.
 // An error is returned if the supplied ID is not the expected next ID (i.e. if the message is out of order)
-func (c *contextType) TryInsertMessage(origin string, originAddress string, message string, id uint32) (bool, error) {
-	if id == 0 {
-		return false, errors.New("message IDs must start from 1")
-	}
-
-	expectedNextID := c.Database.NextID(origin)
-	if id == expectedNextID {
+// Note that the message is assumed to have already been verified for correctness.
+func (c *contextType) TryInsertMessage(m *RumorMessage, originAddress string) (bool, error) {
+	expectedNextID := c.Database.NextID(m.Origin)
+	if m.ID == expectedNextID {
 		// New message (in order)
-		// TODO change interface
+		mr := &MessageRecord{}
+		mr.Data = *m
+		mr.FromAddress = originAddress
+		mr.DateSeen = time.Now().Format(time.RFC3339)
+		c.Database.InsertOrUpdateMessage(mr)
 		return true, nil
-	} else if id < expectedNextID {
-		// Already seen
-		// TODO handle conflicts
+
+	} else if m.ID < expectedNextID {
+		// Already seen.
+		// In this case, conflicts are resolved by adopting the message with the lowest hash.
+		// Note that messages are already verified at this point, so this case can happen only if the sender
+		// tries to send different messages having the same ID (with possibly malicious intent).
+
+		dbMsg := c.Database.GetMessage(m.Origin, m.ID).Data
+		if CompareHashes(m.ComputeHash(), dbMsg.ComputeHash()) == -1 {
+			// Replace the old message with the new one
+			mr := &MessageRecord{}
+			mr.Data = *m
+			mr.FromAddress = originAddress
+			mr.DateSeen = time.Now().Format(time.RFC3339)
+			c.Database.InsertOrUpdateMessage(mr)
+			return true, nil // We return true to redistribute the message
+		}
+
 		return false, nil
 	} else {
 		// Out-of-order delivery -> return an error
@@ -161,14 +230,14 @@ func (c *contextType) VectorClockDifference(other []PeerStatus) ([]PeerStatus, [
 			} else if match < otherStatus.NextID {
 				thisDiff = append(thisDiff, PeerStatus{otherStatus.Identifier, match})
 			}
-		} else if otherStatus.NextID > 1 {
+		} else if otherStatus.NextID > 0 {
 			thisDiff = append(thisDiff, PeerStatus{otherStatus.Identifier, match})
 		}
 	}
 
 	for peerName, _ := range vcMap {
 		if !otherSet[peerName] {
-			otherDiff = append(otherDiff, PeerStatus{peerName, 1})
+			otherDiff = append(otherDiff, PeerStatus{peerName, 0})
 		}
 	}
 
@@ -192,28 +261,33 @@ func (c *contextType) RunSync(event func()) {
 	<-proceed
 }
 
-func (c *contextType) GetPublicKeyOf(node string) PublicKey {
+func (c *contextType) GetPublicKeyOf(node string) (PublicKey, error) {
 	// Get special message with ID = 0 (public key announcement)
 	msg := c.Database.GetMessage(node, 0)
 	if msg == nil {
 		// Unknown node
-		return nil
+		return nil, errors.New("public key of node not found in database (unknown node)")
 	}
 
-	return DeserializePublicKey(msg.Data.Content)
+	pk, err := DeserializePublicKey(msg.Data.Content)
+	if err != nil {
+		return nil, errors.New("unable to decode the public key of the node (database corrupted?)")
+	}
+	return pk, nil
 }
 
+// InsertKeyAnnouncementMessage adds a new message with the public key announcement of THIS node
 func (c *contextType) InsertKeyAnnouncementMessage() {
 	nextID := c.GetMyNextID()
 	if nextID == 0 {
 		m := &MessageRecord{}
 		m.Data.ID = nextID
 		m.Data.Origin = c.DisplayName
-		m.Data.Destination = "" // Public message
+		m.Data.Destination = ""                  // Public message
 		m.Data.Content = c.PublicKey.Serialize() // The content is our public key (serialized to bytes)
-		m.Data.Signature = make([]byte, 0) // Not needed, since the name is self-signing
+		m.Data.Signature = make([]byte, 0)       // Not needed, since the name is self-signing
 		m.Data.ComputeNonce(c.PowTarget)
-		m.FromAddress = c.ThisNodeAddress
+		m.FromAddress = "localhost:" + strings.Split(c.ThisNodeAddress, ":")[1]
 		m.DateSeen = time.Now().Format(time.RFC3339)
 
 		c.Database.InsertOrUpdateMessage(m)

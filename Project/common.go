@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"strings"
 )
 
 // FailOnError prints the error and terminates the program, if a non-nil error is given.
@@ -17,25 +16,6 @@ func FailOnError(e error) {
 // AddressToString converts an UDP address structure to a string ipAddress:port
 func AddressToString(addr *net.UDPAddr) string {
 	return addr.IP.String() + ":" + fmt.Sprint(addr.Port)
-}
-
-// AddressToString converts an UDP address structure to a string ipAddress:port
-func AddressStructToString(ipAddress *net.IP, port *int) string {
-	if ipAddress == nil || port == nil {
-		return ""
-	}
-	return ipAddress.String() + ":" + fmt.Sprint(*port)
-}
-
-// ParseAddress parses an ipAddress:port pair and returns the IP address and the port.
-// If a domain name is supplied, it is resolved.
-func ParseAddress(address string) (ipAddress string, port int, err error) {
-	addr, err := net.ResolveUDPAddr("udp", address)
-	if err == nil {
-		ipAddress = addr.IP.String()
-		port = addr.Port
-	}
-	return
 }
 
 // CheckAndResolveAddress checks if an ipAddress:port pair is valid and returns it,
@@ -64,19 +44,34 @@ func IsInArray(elem string, arr []string) bool {
 	}
 	return false
 }
-
-func SplitAddress(address string) (*net.IP, *int) {
-	if address == "" {
-		return nil, nil
+// NumLeadingZeros returns the number of leading zero bits of a hash
+func NumLeadingZeros(hash []byte) int {
+	count := 0
+	for i := 0; i < len(hash); i++ {
+		for j := uint(0); j < 8; j++ {
+			if hash[i]&(1<<j) == 0 {
+				count++
+			} else {
+				return count
+			}
+		}
 	}
-	addr, _ := net.ResolveUDPAddr("udp", address)
-	return &addr.IP, &addr.Port
+	return count
 }
 
-func JoinIntList(list []uint64) string {
-	strList := make([]string, len(list))
-	for i, val := range list {
-		strList[i] = fmt.Sprint(val)
+// CompareHashes compares two hashes of the same length.
+// It returns -1 if hash1 is lower than hash2, 0 if they are equal, and 1 if hash1 is greater than hash2.
+func CompareHashes(hash1 []byte, hash2 []byte) int {
+	if len(hash1) != len(hash2) {
+		panic("the hash lengths must be the same")
 	}
-	return strings.Join(strList, ",")
+
+	for i := 0; i < len(hash1); i++ {
+		if hash1[i] < hash2[i] {
+			return -1
+		} else if hash1[i] > hash2[i] {
+			return 1
+		}
+	}
+	return 0
 }

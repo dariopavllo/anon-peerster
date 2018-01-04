@@ -6,8 +6,10 @@ import (
 	"encoding/base32"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"github.com/dedis/protobuf"
 	"strings"
+	"time"
 )
 
 // Proof-of-work nonce length (in bytes)
@@ -51,7 +53,7 @@ func (m *RumorMessage) SanityCheck(powTarget int) error {
 		return errors.New("invalid origin length")
 	}
 
-	// An empty destination (length = 0) means that a message is delivered to everyone (e.g. in key announcements)
+	// An empty destination (length = 0) means that a message is delivered to everyone (as in key announcements)
 	if len(m.Destination) != DISPLAY_NAME_BITS/5 && len(m.Destination) != 0 {
 		return errors.New("invalid destination length")
 	}
@@ -60,13 +62,13 @@ func (m *RumorMessage) SanityCheck(powTarget int) error {
 		return errors.New("invalid nonce length")
 	}
 
-	_, err := base32.StdEncoding.DecodeString(strings.ToLower(m.Origin))
+	_, err := base32.StdEncoding.DecodeString(strings.ToUpper(m.Origin))
 	if err != nil {
 		return errors.New("invalid origin")
 	}
 
 	if len(m.Destination) != 0 {
-		_, err := base32.StdEncoding.DecodeString(strings.ToLower(m.Destination))
+		_, err := base32.StdEncoding.DecodeString(strings.ToUpper(m.Destination))
 		if err != nil {
 			return errors.New("invalid destination")
 		}
@@ -106,28 +108,17 @@ func (m *RumorMessage) Payload() []byte {
 	return b.Bytes()
 }
 
-// NumLeadingZeros returns the number of leading zero bits of a hash
-func NumLeadingZeros(hash []byte) int {
-	count := 0
-	for i := 0; i < len(hash); i++ {
-		for j := uint(0); j < 8; j++ {
-			if hash[i]&(1<<j) == 0 {
-				count++
-			} else {
-				return count
-			}
-		}
-	}
-	return count
-}
-
 // ComputeNonce computes the proof-of-work nonce for this message, according to the given target (number of leading zeros).
 // The process may require a long time, since the nonce is bruteforced.
 func (m *RumorMessage) ComputeNonce(target int) {
 	// The initial nonce is "all zeros"
 	m.Nonce = make([]byte, NONCE_LENGTH)
 
+	fmt.Printf("Starting a nonce computation with %d leading zeros...\n", target)
+	t1 := time.Now()
+	tries := uint64(0)
 	for {
+		tries++
 		if NumLeadingZeros(m.ComputeHash()) >= target {
 			break
 		}
@@ -142,4 +133,6 @@ func (m *RumorMessage) ComputeNonce(target int) {
 			}
 		}
 	}
+	t2 := time.Now()
+	fmt.Printf("Nonce computed in %.2f seconds (%d tries)\n", t2.Sub(t1).Seconds(), tries)
 }
