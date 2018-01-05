@@ -1,6 +1,8 @@
 @echo off
-del gossiper.exe
+del gossiper.exe 2> nul
+echo Compiling...
 go build
+echo Compiled.
 rename Project.exe gossiper.exe
 
 start "LeafA" cmd /K gossiper -dataDir=_data/LeafA -gossipAddr=127.0.0.1:5001 -peers=127.0.0.1:5005 -UIPort=8080
