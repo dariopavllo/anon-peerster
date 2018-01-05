@@ -33,6 +33,9 @@ $(document).ready(function(){
 				},
 				error: function() {
 					alert("Unable to send private message")
+					$("#sendMessage").prop("disabled", false)
+					$("#message").prop("disabled", false)
+					$("#loading").hide()
 				},
 				contentType: "application/json"
 			})
@@ -52,6 +55,9 @@ $(document).ready(function(){
 				},
 				error: function() {
 					alert("Unable to send gossip message")
+					$("#sendMessage").prop("disabled", false)
+					$("#message").prop("disabled", false)
+					$("#loading").hide()
 				},
 				contentType: "application/json"
 			})

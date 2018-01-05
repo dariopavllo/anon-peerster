@@ -10,11 +10,11 @@ import (
 )
 
 func main() {
-	uiPort := flag.Int("UIPort", 0, "port for the HTTP/CLI client")
+	uiPort := flag.Int("UIPort", 0, "port for the HTTP client")
 	gossipIpPort := flag.String("gossipAddr", "", "address/port for the gossiper")
 	dataDir := flag.String("dataDir", "", "the directory for storing the DB and keys")
 	peersParams := flag.String("peers", "", "peers separated by commas")
-	powDifficulty := flag.Int("powDifficulty", 16, "proof-of-work difficulty (default: 16 zeros)")
+	powDifficulty := flag.Int("powDifficulty", 16, "proof-of-work difficulty (leading zeros)")
 
 	flag.Parse()
 
