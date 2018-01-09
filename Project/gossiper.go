@@ -14,7 +14,7 @@ func main() {
 	gossipIpPort := flag.String("gossipAddr", "", "address/port for the gossiper")
 	dataDir := flag.String("dataDir", "", "the directory for storing the DB and keys")
 	peersParams := flag.String("peers", "", "peers separated by commas")
-	powDifficulty := flag.Int("powDifficulty", 16, "proof-of-work difficulty (leading zeros)")
+	powDifficulty := flag.Int("powDifficulty", 18, "proof-of-work difficulty (leading zeros)")
 
 	flag.Parse()
 

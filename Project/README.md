@@ -16,7 +16,7 @@ After compiling the package with `go build` and renaming the executable "Project
 ##### Optional arguments
 - `-peers=...` peers separated by commas.
 - `-UIPort=...` port for the HTTP client, which listens only on `localhost`.
-- `-powDifficulty=...` proof-of-work difficulty (default: 16 leading zeros).
+- `-powDifficulty=...` proof-of-work difficulty (default: 18 leading zeros).
 ##### Example
 ```
 gossiper -dataDir=_data/RingA -gossipAddr=:5005 -peers=127.0.0.1:5006,127.0.0.1:5008,127.0.0.1:5001 -UIPort=8080
